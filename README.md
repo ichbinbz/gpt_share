@@ -23,6 +23,7 @@
 
 - [CWS Codex Plus 共享方案](CODEX_PLUS_SHARE.zh-CN.md)
 - [服务器账号管理使用说明](SERVER_ACCOUNT_MANAGEMENT.zh-CN.md)
+- GitHub Release 同时提供 Windows 员工端安装包和 Linux 服务端部署包。
 - 项目特点：https://cws-docs.pages.dev/zh/
 - 快速部署指南：http://cws-docs.pages.dev/zh/guide/quick-start.html
 - 演示截图：http://cws-docs.pages.dev/zh/demo/screenshots.html

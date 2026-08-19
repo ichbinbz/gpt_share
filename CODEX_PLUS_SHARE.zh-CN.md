@@ -90,8 +90,10 @@ $env:CWS_CODEX_DEVICE_TOKEN='该设备的随机令牌'
 .\scripts\start_vscode_cws_codex_windows.ps1
 ```
 
-Windows 员工日常使用建议直接分发 `dist/CWS-Codex-Windows-v0.1.1.zip`。员工解压后双击
-`安装.cmd`，输入管理员为本机签发的令牌；安装器会使用 Windows DPAPI 保存令牌、安装/检查
+Windows 员工日常使用建议直接分发标准图形安装器 `dist/CWS-Codex-Setup-v0.1.1.exe`，员工无需
+手工解压即可双击安装，并可在 Windows“已安装的应用”中卸载。`dist/CWS-Codex-Windows-v0.1.1.zip`
+保留用于管理员排障。员工输入管理员
+为本机签发的令牌后，安装器会使用 Windows DPAPI 保存令牌、安装/检查
 官方 `openai.chatgpt` 扩展、创建独立 `%USERPROFILE%\.cws-codex`，并在桌面生成 `公司 Codex（VS Code）`
 快捷方式。安装器还会在当前 Windows 用户的启动目录创建隐藏后台任务；该任务不依赖 CMD 窗口或
 VS Code 是否打开，每 5 分钟同步短期凭据并上报 Token 累计值。后台使用互斥锁避免重复运行，电脑
