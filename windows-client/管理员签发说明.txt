@@ -1,0 +1,23 @@
+CWS Codex 设备令牌签发说明
+===========================
+
+每台员工电脑使用一枚独立令牌。令牌由服务器签发，不是在员工电脑上自行生成，
+也不要把同一枚令牌分发给多台电脑。
+
+在服务器执行：
+
+  /opt/cws-codex/codex_device_tokens.py create "部门-员工-PC编号"
+
+命令最后一行是明文令牌，只显示一次。通过公司认可的安全方式交给对应员工，
+让员工在运行“安装.cmd”时输入。服务器注册表只保存令牌的 SHA-256 哈希。
+
+管理命令：
+
+  /opt/cws-codex/codex_device_tokens.py list
+  /opt/cws-codex/codex_device_tokens.py revoke "部门-员工-PC编号"
+  /opt/cws-codex/codex_device_tokens.py rotate "部门-员工-PC编号"
+
+rotate 会立即吊销这个标签下的全部旧令牌，并签发一枚只显示一次的新令牌。
+员工换机或人员离职时，应先 revoke；重新授权时再 create 或 rotate。
+
+不要把令牌预置进 ZIP，也不要通过命令行参数传入安装器，以免进入脚本、日志或进程记录。

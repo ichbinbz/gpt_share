@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CWS Codex 账号额度与员工用量</title>
+  <style>
+    :root { color-scheme: dark; --bg:#07111f; --panel:#0e1c2f; --line:#20344e; --text:#edf5ff; --muted:#91a4bc; --cyan:#38d7ff; --green:#43df9b; --yellow:#ffc65a; --red:#ff697d; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; color:var(--text); background:radial-gradient(circle at 10% 0%,#123152 0,transparent 34%),radial-gradient(circle at 90% 10%,#123c47 0,transparent 28%),var(--bg); }
+    main { width:min(1120px,calc(100% - 32px)); margin:0 auto; padding:42px 0 60px; }
+    header { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; margin-bottom:26px; }
+    h1 { margin:0; font-size:clamp(26px,4vw,42px); letter-spacing:-.04em; }
+    .subtitle,.muted { color:var(--muted); }
+    .toolbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    button,input { font:inherit; }
+    button { border:1px solid var(--line); border-radius:10px; color:var(--text); background:#14263d; padding:9px 14px; cursor:pointer; }
+    button:hover { border-color:var(--cyan); }
+    button:disabled { cursor:wait; opacity:.65; }
+    .summary { display:flex; gap:10px; margin:0 0 18px; flex-wrap:wrap; }
+    .pill { padding:6px 10px; border:1px solid var(--line); border-radius:999px; background:rgba(14,28,47,.82); color:var(--muted); }
+    .pill strong { color:var(--text); }
+    #accounts { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:16px; }
+    .section-head { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; margin:30px 0 12px; }
+    .section-head h2 { margin:0; font-size:22px; }
+    .table-wrap { overflow:auto; border:1px solid var(--line); border-radius:16px; background:rgba(10,24,42,.96); }
+    table { width:100%; border-collapse:collapse; white-space:nowrap; }
+    th,td { padding:11px 13px; text-align:right; border-bottom:1px solid var(--line); }
+    th { color:var(--muted); font-size:12px; font-weight:600; background:rgba(19,39,63,.9); }
+    th:first-child,td:first-child { text-align:left; position:sticky; left:0; background:#0d1d31; }
+    tbody tr:last-child td { border-bottom:0; }
+    .employee { font-weight:700; }
+    .token-id { color:var(--muted); font:11px ui-monospace,SFMono-Regular,Consolas,monospace; }
+    .card { border:1px solid var(--line); border-radius:16px; padding:18px; background:linear-gradient(145deg,rgba(19,39,63,.96),rgba(10,24,42,.96)); box-shadow:0 16px 50px rgba(0,0,0,.2); }
+    .card-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
+    .alias { font-size:18px; font-weight:700; }
+    .tags { display:flex; gap:6px; }
+    .tag { padding:3px 8px; border-radius:999px; font-size:12px; background:#1a3150; color:var(--muted); }
+    .tag.ok { color:var(--green); background:rgba(67,223,155,.12); }
+    .tag.bad { color:var(--red); background:rgba(255,105,125,.12); }
+    .meta { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px; }
+    .metric { border:1px solid rgba(32,52,78,.8); border-radius:11px; padding:10px 12px; background:rgba(7,17,31,.35); }
+    .metric span { display:block; color:var(--muted); font-size:12px; }
+    .metric strong { font-size:17px; }
+    .window { padding-top:13px; margin-top:13px; border-top:1px solid var(--line); }
+    .window-head,.window-foot { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+    .window-head { margin-bottom:8px; }
+    .window-foot { margin-top:7px; color:var(--muted); font-size:12px; }
+    .bar { height:9px; border-radius:999px; background:#1b2d45; overflow:hidden; }
+    .bar > i { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,var(--green),var(--cyan)); }
+    .bar > i.warn { background:linear-gradient(90deg,var(--yellow),#ff9f43); }
+    .bar > i.danger { background:linear-gradient(90deg,#ff9f43,var(--red)); }
+    .error,.empty { border:1px solid var(--line); border-radius:14px; padding:20px; background:rgba(14,28,47,.82); }
+    .error { color:#ffd6dc; border-color:rgba(255,105,125,.5); }
+    dialog { width:min(440px,calc(100% - 28px)); border:1px solid var(--line); border-radius:18px; padding:0; color:var(--text); background:var(--panel); box-shadow:0 28px 90px rgba(0,0,0,.55); }
+    dialog::backdrop { background:rgba(1,8,17,.78); backdrop-filter:blur(6px); }
+    .login { padding:24px; }
+    .login h2 { margin:0 0 6px; }
+    .login p { margin:0 0 18px; color:var(--muted); }
+    .login input { width:100%; border:1px solid var(--line); border-radius:10px; padding:11px 12px; color:var(--text); background:#091729; outline:none; }
+    .login input:focus { border-color:var(--cyan); }
+    .login-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:14px; }
+    @media (max-width:700px) { header { align-items:flex-start; flex-direction:column; } main { padding-top:26px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div><h1>Codex 账号额度与员工用量</h1><div class="subtitle">账号额度来自官方窗口；员工 Token 数来自本机 Codex 累计记录</div></div>
+      <div class="toolbar"><span id="updated" class="muted">尚未查询</span><button id="logout">更换查询令牌</button><button id="refresh">刷新数据</button></div>
+    </header>
+    <div class="summary"><span class="pill">账号 <strong id="total">—</strong></span><span class="pill">可用 <strong id="available">—</strong></span><span class="pill">活动租约 <strong id="leases">—</strong></span></div>
+    <div id="message" hidden></div>
+    <section id="accounts"></section>
+    <div class="section-head"><div><h2>员工 Token 使用量</h2><div class="muted">按服务器签发的员工设备令牌归属；重复上报不会重复计数</div></div><span class="pill">员工令牌 <strong id="employees">—</strong></span></div>
+    <section id="employeeUsage"></section>
+  </main>
+  <dialog id="loginDialog">
+    <form class="login" method="dialog" id="loginForm">
+      <h2>输入管理员查询令牌</h2>
+      <p>令牌只保存在当前标签页的会话存储中，关闭标签页后清除。</p>
+      <input id="token" type="password" autocomplete="off" placeholder="CWS_CODEX_ADMIN_TOKEN" required>
+      <div class="login-actions"><button type="submit">查询额度</button></div>
+    </form>
+  </dialog>
+  <script>
+    const key='cws-codex-quota-token';
+    const $=id=>document.getElementById(id);
+    const esc=value=>String(value??'');
+    const number=value=>Number.isFinite(Number(value))?Number(value):null;
+    const pct=value=>Math.max(0,Math.min(100,number(value)??0));
+    const tokenNumber=value=>new Intl.NumberFormat('zh-CN').format(number(value)||0);
+    const duration=seconds=>{const s=number(seconds);if(!s)return '未知窗口';if(s>=86400)return `${Math.round(s/86400)} 天窗口`;if(s>=3600)return `${Math.round(s/3600)} 小时窗口`;return `${Math.round(s/60)} 分钟窗口`;};
+    const resetText=w=>{let at=number(w?.reset_at);if(!at&&number(w?.reset_after_seconds))at=Date.now()/1000+number(w.reset_after_seconds);return at?new Date(at*1000).toLocaleString():'未知';};
+    const windowsOf=account=>{const rate=account?.usage?.rate_limit||{};return [['主窗口',rate.primary_window],['次窗口',rate.secondary_window]].filter(([,v])=>v&&typeof v==='object');};
+    function node(tag,cls,text){const el=document.createElement(tag);if(cls)el.className=cls;if(text!==undefined)el.textContent=esc(text);return el;}
+    function metric(label,value){const el=node('div','metric');el.append(node('span','',label),node('strong','',value));return el;}
+    function renderWindow(label,w){const used=pct(w.used_percent),remaining=Math.max(0,100-used);const box=node('div','window');const head=node('div','window-head');head.append(node('strong','',label),node('span','',`剩余 ${remaining.toFixed(0)}%`));const bar=node('div','bar');const fill=node('i',used>=90?'danger':used>=70?'warn':'');fill.style.width=`${used}%`;bar.append(fill);const foot=node('div','window-foot');foot.append(node('span','',`已用 ${used.toFixed(0)}% · ${duration(w.limit_window_seconds||w.window_seconds)}`),node('span','',`重置：${resetText(w)}`));box.append(head,bar,foot);return box;}
+    function render(data){const accounts=Array.isArray(data.accounts)?data.accounts:[];$('total').textContent=accounts.length;$('available').textContent=accounts.filter(a=>a.available).length;$('leases').textContent=accounts.reduce((n,a)=>n+(number(a.active_leases)||0),0);$('updated').textContent=`更新：${new Date((data.fetched_at||Date.now()/1000)*1000).toLocaleString()}`;$('accounts').replaceChildren();$('message').hidden=true;if(!accounts.length){$('accounts').append(node('div','empty','尚未发现 Codex 账号。'));return;}accounts.forEach(account=>{const card=node('article','card');const head=node('div','card-head');const left=node('div');left.append(node('div','alias',account.alias||'未命名账号'));const tags=node('div','tags');tags.append(node('span',`tag ${account.available?'ok':'bad'}`,account.available?'可用':'不可用'),node('span','tag',(account.plan_type||'未知套餐').toUpperCase()));head.append(left,tags);const meta=node('div','meta');meta.append(metric('调度使用分',number(account.usage_score)?.toFixed(0)??'—'),metric('活动租约',number(account.active_leases)??0));card.append(head,meta);if(!account.available){card.append(node('div','error',account.error||'账号凭据或额度查询失败'));}else{const windows=windowsOf(account);if(windows.length)windows.forEach(([label,w])=>card.append(renderWindow(label,w)));else card.append(node('div','empty','官方接口暂未返回额度窗口。'));} $('accounts').append(card);});}
+    function renderUsage(data){const devices=Array.isArray(data.devices)?data.devices:[];$('employees').textContent=devices.length;$('employeeUsage').replaceChildren();if(!devices.length){$('employeeUsage').append(node('div','empty','尚未收到员工端连接或用量上报。'));return;}const wrap=node('div','table-wrap');const table=node('table');const head=node('thead');const header=node('tr');['员工 / 令牌','状态','本机 IP','代理源 IP','输入','缓存输入','输出','推理输出','合计','会话','最后活动'].forEach(label=>header.append(node('th','',label)));head.append(header);const body=node('tbody');devices.forEach(device=>{const row=node('tr');const identity=node('td');identity.append(node('div','employee',device.employee_name||device.device_label||'未命名员工'),node('div','token-id',device.device_label||''),node('div','token-id',String(device.device_token_id||'').slice(0,12)));const lastSeen=number(device.last_seen_at)||number(device.last_reported_at);const age=Date.now()/1000-(lastSeen||0);const status=!device.enabled?'已吊销':age<=900?'在线':'数据过期';row.append(identity,node('td','',status),node('td','',device.client_ip||'—'),node('td','',device.source_ip||'—'),node('td','',tokenNumber(device.input_tokens)),node('td','',tokenNumber(device.cached_input_tokens)),node('td','',tokenNumber(device.output_tokens)),node('td','',tokenNumber(device.reasoning_output_tokens)),node('td','',tokenNumber(device.total_tokens)),node('td','',tokenNumber(device.session_count)),node('td','',lastSeen?new Date(lastSeen*1000).toLocaleString():'—'));body.append(row);});table.append(head,body);wrap.append(table);$('employeeUsage').append(wrap);}
+    function showError(message){const box=$('message');box.className='error';box.textContent=message;box.hidden=false;}
+    async function load(force=false){const token=sessionStorage.getItem(key);if(!token){$('loginDialog').showModal();return;}$('refresh').disabled=true;try{const headers={Authorization:`Bearer ${token}`};const [accountsResponse,usageResponse]=await Promise.all([fetch(`/v1/admin/accounts?refresh=${force?'true':'false'}`,{headers,cache:'no-store'}),fetch('/v1/admin/device-usage',{headers,cache:'no-store'})]);if(accountsResponse.status===401||usageResponse.status===401){sessionStorage.removeItem(key);throw new Error('查询令牌无效，请重新输入。');}if(!accountsResponse.ok||!usageResponse.ok)throw new Error(`查询失败（HTTP ${accountsResponse.status}/${usageResponse.status}）`);render(await accountsResponse.json());renderUsage(await usageResponse.json());}catch(error){showError(error.message||String(error));if(!sessionStorage.getItem(key))$('loginDialog').showModal();}finally{$('refresh').disabled=false;}}
+    $('loginForm').addEventListener('submit',event=>{event.preventDefault();sessionStorage.setItem(key,$('token').value.trim());$('token').value='';$('loginDialog').close();load(true);});
+    $('refresh').addEventListener('click',()=>load(true));
+    $('logout').addEventListener('click',()=>{sessionStorage.removeItem(key);$('loginDialog').showModal();});
+    load(false);setInterval(()=>{if(sessionStorage.getItem(key))load(false);},30000);
+  </script>
+</body>
+</html>

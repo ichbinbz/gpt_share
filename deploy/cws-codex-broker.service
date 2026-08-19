@@ -1,0 +1,22 @@
+[Unit]
+Description=CWS Codex Plus credential broker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/cws-codex
+EnvironmentFile=/etc/cws-codex/broker.env
+ExecStart=/opt/cws-codex-venv/bin/python /opt/cws-codex/codex_plus_broker.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/cws-codex
+
+[Install]
+WantedBy=multi-user.target
