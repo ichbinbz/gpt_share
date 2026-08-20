@@ -56,3 +56,8 @@ CWS Codex Linux 服务端部署包
 升级：
 重新执行 ./install-server.sh。安装器会更新程序和 systemd 服务文件，但不会覆盖现有
 /etc/cws-codex/broker.env、auth.json、设备令牌注册表或用量数据。
+
+租约均衡：
+- 默认每个设备最多连续使用同一账号 24 小时，之后重新参与调度。
+- 可在 /etc/cws-codex/broker.env 中通过 CWS_CODEX_LEASE_ROTATION_SECONDS 调整，默认 86400。
+- 同等额度可用性下优先选择活动租约较少的账号，再比较额度重置时间和剩余额度。

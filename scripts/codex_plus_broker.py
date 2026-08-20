@@ -52,6 +52,7 @@ USER_INPUT_FIELDS = (
 )
 USAGE_FIELDS = TOKEN_FIELDS + USER_INPUT_FIELDS
 USAGE_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
+BROKER_VERSION = "0.1.5"
 
 
 def _b64url_json(value: str) -> dict[str, Any]:
@@ -152,6 +153,7 @@ class BrokerSettings:
     device_tokens: tuple[str, ...]
     admin_token: str | None
     lease_seconds: int
+    lease_rotation_seconds: int
     refresh_window_seconds: int
     usage_cache_seconds: int
 
@@ -172,6 +174,9 @@ class BrokerSettings:
             device_tokens=device_tokens,
             admin_token=os.getenv("CWS_CODEX_ADMIN_TOKEN") or None,
             lease_seconds=int(os.getenv("CWS_CODEX_LEASE_SECONDS", "28800")),
+            lease_rotation_seconds=max(
+                3600, int(os.getenv("CWS_CODEX_LEASE_ROTATION_SECONDS", "86400"))
+            ),
             refresh_window_seconds=int(os.getenv("CWS_CODEX_REFRESH_WINDOW_SECONDS", "900")),
             usage_cache_seconds=int(os.getenv("CWS_CODEX_USAGE_CACHE_SECONDS", "30")),
         )
@@ -554,17 +559,18 @@ def account_selection_key(
     active_leases: int,
     *,
     now: float | None = None,
-) -> tuple[int, float, int, float]:
+) -> tuple[int, int, float, float]:
     """Prefer healthy allowance that has lots left and will reset soon.
 
     The reset-seconds-per-remaining-percent ratio models allowance expiry:
     lower values mean more unused allowance is about to disappear. Accounts
     below 20% effective remaining capacity are kept behind healthy/unknown
-    accounts, while active leases add a modest anti-concentration penalty.
+    accounts. Within the same capacity band, the fewest active leases wins;
+    reset urgency then breaks ties so allowance nearing expiry is still used.
     """
     windows = _usage_windows(usage)
     if not windows:
-        return (1, float("inf"), max(0, active_leases), -50.0)
+        return (1, max(0, active_leases), float("inf"), -50.0)
     current_time = time.time() if now is None else now
     remaining_values: list[float] = []
     expiry_ratios: list[float] = []
@@ -578,12 +584,11 @@ def account_selection_key(
         if seconds is not None and remaining > 0:
             expiry_ratios.append(seconds / remaining)
     if not remaining_values:
-        return (1, float("inf"), max(0, active_leases), -50.0)
+        return (1, max(0, active_leases), float("inf"), -50.0)
     effective_remaining = min(remaining_values)
     capacity_band = 0 if effective_remaining >= 20.0 else 2
     expiry_ratio = min(expiry_ratios) if expiry_ratios else float("inf")
-    load_adjusted_ratio = expiry_ratio * (1.0 + max(0, active_leases) * 0.35)
-    return (capacity_band, load_adjusted_ratio, max(0, active_leases), -effective_remaining)
+    return (capacity_band, max(0, active_leases), expiry_ratio, -effective_remaining)
 
 
 class TokenBroker:
@@ -631,6 +636,7 @@ class TokenBroker:
         if not self.accounts:
             raise HTTPException(status_code=503, detail="no Codex accounts are configured")
         now = int(time.time())
+        client_device_hash = hashlib.sha256(client_device_id.encode("utf-8")).hexdigest()
         async with self.state_lock:
             state = self._load_state()
             leases = state.setdefault("leases", {})
@@ -641,6 +647,19 @@ class TokenBroker:
             existing = leases.get(requested_lease_id) if requested_lease_id else None
             if isinstance(existing, dict) and existing.get("device_token_id") != identity.token_id:
                 existing = None
+            if isinstance(existing, dict):
+                created_at = int(existing.get("created_at", now))
+                if created_at + self.settings.lease_rotation_seconds <= now:
+                    leases.pop(str(requested_lease_id), None)
+                    existing = None
+            if existing is None:
+                for lease_id, lease in list(leases.items()):
+                    if (
+                        isinstance(lease, dict)
+                        and lease.get("device_token_id") == identity.token_id
+                        and lease.get("client_device_hash") == client_device_hash
+                    ):
+                        leases.pop(lease_id, None)
             alias = existing.get("account_alias") if isinstance(existing, dict) else None
             if alias not in self.accounts:
                 alias = None
@@ -688,9 +707,10 @@ class TokenBroker:
                 "account_alias": alias,
                 "device_token_id": identity.token_id,
                 "device_label": identity.label,
-                "client_device_hash": hashlib.sha256(client_device_id.encode("utf-8")).hexdigest(),
+                "client_device_hash": client_device_hash,
                 "client_ip": client_ip,
                 "source_ip": source_ip,
+                "created_at": int(existing.get("created_at", now)) if isinstance(existing, dict) else now,
                 "expires_at": lease_expires,
             }
             self._save_state(state)
@@ -760,7 +780,7 @@ def request_source_ip(request: FastAPIRequest) -> str | None:
 settings = BrokerSettings.from_env()
 broker = TokenBroker(settings)
 usage_store = DeviceUsageStore(settings.usage_state_file)
-app = FastAPI(title="CWS Codex Plus Broker", version="0.1.4")
+app = FastAPI(title="CWS Codex Plus Broker", version=BROKER_VERSION)
 
 
 def _legacy_device_identity(supplied: str) -> DeviceIdentity:
@@ -839,7 +859,7 @@ async def require_admin(authorization: str | None = Header(default=None)) -> Non
 
 @app.get("/healthz")
 async def healthz() -> dict[str, Any]:
-    return {"ok": True, "accounts": len(broker.accounts)}
+    return {"ok": True, "accounts": len(broker.accounts), "version": BROKER_VERSION}
 
 
 @app.get("/quota", response_class=HTMLResponse, include_in_schema=False)
@@ -889,6 +909,7 @@ async def report_usage(
 @app.get("/v1/admin/accounts", dependencies=[Depends(require_admin)])
 async def list_accounts(refresh: bool = False) -> dict[str, Any]:
     return {
+        "version": BROKER_VERSION,
         "accounts": await broker.account_status(refresh_usage=refresh),
         "fetched_at": time.time(),
     }
@@ -897,6 +918,7 @@ async def list_accounts(refresh: bool = False) -> dict[str, Any]:
 @app.get("/v1/admin/device-usage", dependencies=[Depends(require_admin)])
 async def list_device_usage() -> dict[str, Any]:
     return {
+        "version": BROKER_VERSION,
         "devices": await usage_store.summary(_device_registry_summary()),
         "fetched_at": time.time(),
     }

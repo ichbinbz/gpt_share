@@ -90,9 +90,9 @@ $env:CWS_CODEX_DEVICE_TOKEN='该设备的随机令牌'
 .\scripts\start_vscode_cws_codex_windows.ps1
 ```
 
-Windows 员工日常使用建议分发 `dist/CWS-Codex-Release-v0.1.4.zip`，其中包含标准图形安装器
-`CWS-Codex-Setup-v0.1.4.exe` 和简明的 `使用说明.txt`。员工解压后双击安装器即可安装，并可在
-Windows“已安装的应用”中卸载。`dist/CWS-Codex-Windows-v0.1.4.zip`
+Windows 员工日常使用建议分发 `dist/CWS-Codex-Release-v0.1.5.zip`，其中包含标准图形安装器
+`CWS-Codex-Setup-v0.1.5.exe` 和简明的 `使用说明.txt`。员工解压后双击安装器即可安装，并可在
+Windows“已安装的应用”中卸载。`dist/CWS-Codex-Windows-v0.1.5.zip`
 保留用于管理员排障。员工输入管理员
 为本机签发的令牌后，安装器会使用 Windows DPAPI 保存令牌、安装/检查
 官方 `openai.chatgpt` 扩展、创建独立 `%USERPROFILE%\.cws-codex`，并在桌面生成 `公司 Codex（VS Code）`
@@ -100,7 +100,7 @@ Windows“已安装的应用”中卸载。`dist/CWS-Codex-Windows-v0.1.4.zip`
 VS Code 是否打开，每 5 分钟同步短期凭据并上报 Token 累计值。后台使用互斥锁避免重复运行，电脑
 休眠或断网恢复后会从本地累计记录补报。
 
-Ubuntu/Linux 员工端发布包为 `dist/CWS-Codex-Linux-v0.1.4.tar.gz`。员工解压后以普通用户运行
+Ubuntu/Linux 员工端发布包为 `dist/CWS-Codex-Linux-v0.1.5.tar.gz`。员工解压后以普通用户运行
 `./install.sh`，不要使用 sudo。安装器会把客户端放到 `~/.local/share/cws-codex`，创建应用菜单和
 可选桌面入口，并启用 systemd 用户级定时器。设备令牌存放在权限为 `600` 的用户私有文件中；
 启动 VS Code 时复用用户原有配置、默认 `~/.codex` 和历史对话，仅替换其中的 `auth.json`。客户端状态、原凭据备份和租约保存在 `~/.cws-codex`；卸载时会在安全校验后恢复原凭据。安装前已有会话不会计入公司 Token 用量上报。
@@ -115,6 +115,10 @@ Token 计数，以及在本机计算的用户消息数、字符数和“用户�
 Windows 和 Linux 客户端启动时每天最多检查一次 GitHub 最新 Release。发现新版本后显示更新提示，
 用户确认即可自动下载和安装；设备令牌、代理、默认 VS Code 配置、目录历史和 Codex 对话历史都会
 保留。更新包下载地址限制为本项目 GitHub Release，并在 GitHub 提供 SHA-256 摘要时执行校验。
+
+客户端每 5 分钟续期凭据和上报用量，但同一账号租约最多保持 24 小时；到期后主动重新参与调度。
+服务端也对旧客户端执行相同的 24 小时硬上限。重新分配时先选择同等可用性下活动租约最少的账号，
+再以额度余量和重置时间打破平局，避免大量员工长期集中到同一个账号。
 
 该统计反映 Codex 本地会话记录中的模型 Token 数，不是 OpenAI 官方账单，也不能直接换算为 Plus
 额度窗口的剩余百分比。本地记录被首次上报前删除、后台任务被本机管理员停用，或 Codex 将来改变

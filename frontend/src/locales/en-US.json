@@ -449,6 +449,8 @@
   "codexEmployeeUsage": {
     "title": "Codex employee token usage",
     "employees": "Employee tokens",
+    "onlyActive": "Only show activity",
+    "noActive": "No employee token with activity was found.",
     "refresh": "Refresh usage",
     "notice": "Usage is attributed by the server-issued employee device token. User message counts, character counts, and estimated text tokens are calculated locally; only numeric counters and hashed session IDs are reported, never conversation content. Weeks start Monday 00:00 and months start on day 1 in Asia/Shanghai.",
     "updatedAt": "Updated",

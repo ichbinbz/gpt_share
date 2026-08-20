@@ -69,6 +69,7 @@ export type CodexAccountQuota = {
 };
 
 export type CodexAccountQuotaStatus = {
+  broker_version?: string | null;
   configured: boolean;
   reachable: boolean;
   accounts: CodexAccountQuota[];
@@ -120,6 +121,7 @@ export type CodexUsagePeriod = {
 };
 
 export type CodexDeviceUsageStatus = {
+  broker_version?: string | null;
   configured: boolean;
   reachable: boolean;
   devices: CodexDeviceUsage[];

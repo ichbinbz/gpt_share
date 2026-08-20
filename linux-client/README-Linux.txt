@@ -1,4 +1,4 @@
-CWS Codex Ubuntu/Linux 员工端 v0.1.4
+CWS Codex Ubuntu/Linux 员工端 v0.1.5
 =====================================
 
 系统要求：
@@ -7,7 +7,7 @@ CWS Codex Ubuntu/Linux 员工端 v0.1.4
 - systemd 用户服务（建议，用于每 5 分钟自动同步）
 
 安装：
-1. 解压 CWS-Codex-Linux-v0.1.4.tar.gz。
+1. 解压 CWS-Codex-Linux-v0.1.5.tar.gz。
 2. 打开终端进入解压后的目录，不要使用 sudo。
 3. 执行：
 
@@ -35,6 +35,7 @@ CWS Codex Ubuntu/Linux 员工端 v0.1.4
 - CODEX_HOME 保持为默认 ~/.codex，仅由客户端同步公司 auth.json 登录凭据。
 - 设备令牌保存在 ~/.local/share/cws-codex/device-token，目录权限 700、文件权限 600。
 - systemd 用户定时器每 5 分钟同步凭据和上报散列后的会话 Token 累计值。
+- 同一账号租约每 24 小时自动重选一次；同等额度可用性下优先分配活动租约更少的账号。
 - 本机统计用户消息数、字符数和文本 Token 估算值，服务器按北京时间自然周、自然月和累计汇总。
 - 不上传对话、提示词、代码或文件内容，只上传统计数值和散列会话 ID。
 - 启动时每天最多检查一次 GitHub 最新 Release；安装了 zenity 时会显示可点击的更新提示，确认后自动升级并保留设备令牌和配置。

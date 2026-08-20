@@ -14,7 +14,7 @@
 )
 
 $ErrorActionPreference = "Stop"
-$ClientVersion = "0.1.4"
+$ClientVersion = "0.1.5"
 . (Join-Path $PSScriptRoot "Common-CwsCodex.ps1")
 $InstallLogPath = Join-Path $env:TEMP "CWS-Codex-Install.log"
 
@@ -131,6 +131,8 @@ $Config = [ordered] @{
     codex_home = $CodexHome
     client_home = $ClientHome
     vscode_path = $VsCodePath
+    lease_rotation_seconds = 86400
+    install_extension = -not [bool] $SkipExtensionInstall
     client_version = $ClientVersion
 }
 $ConfigPath = Join-Path $InstallDir "config.json"
@@ -138,13 +140,7 @@ Write-CwsJsonAtomic -Path $ConfigPath -Value $Config
 Set-CwsPrivateDirectoryAcl -Path $InstallDir
 
 if (-not $SkipExtensionInstall -and -not $AutoUpdate) {
-    Write-Host "正在检查并安装 OpenAI Codex VS Code 扩展..."
-    try {
-        & $VsCodePath --install-extension openai.chatgpt --force | Out-Host
-    }
-    catch {
-        Write-Warning "自动安装扩展失败，请在 VS Code 扩展市场手动安装 OpenAI Codex。"
-    }
+    Write-Host "安装阶段不会启动 VS Code；Codex 扩展将在首次点击桌面快捷方式时检查。"
 }
 
 if (-not $SkipInitialSync) {

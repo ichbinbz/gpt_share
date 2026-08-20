@@ -9,7 +9,7 @@ import tarfile
 from pathlib import Path, PurePosixPath
 
 
-VERSION = "0.1.4"
+VERSION = "0.1.5"
 ARCHIVE_ROOT = f"CWS-Codex-Server-v{VERSION}"
 PACKAGE_FILES = {
     Path("server-package/README-Server.txt"): Path("README-Server.txt"),

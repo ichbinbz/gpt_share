@@ -13,15 +13,28 @@ $CodexHome = [Environment]::ExpandEnvironmentVariables([string] $Config.codex_ho
 $ClientHome = Get-CwsClientHome -Config $Config
 $LeasePath = Join-Path $ClientHome "cws-lease.json"
 $AuthPath = Join-Path $CodexHome "auth.json"
+$LeaseRotationSeconds = 86400
+if ($Config.lease_rotation_seconds) {
+    $LeaseRotationSeconds = [Math]::Max(3600, [int64] $Config.lease_rotation_seconds)
+}
 
 Initialize-CwsAuthBackup -CodexHome $CodexHome -ClientHome $ClientHome
 Initialize-CwsUsageBaseline -CodexHome $CodexHome -ClientHome $ClientHome
 
 $LeaseId = $null
+$LeaseStartedAt = $null
 if (-not $NewLease -and (Test-Path -LiteralPath $LeasePath)) {
     try {
         $LeaseState = Get-Content -LiteralPath $LeasePath -Raw -Encoding UTF8 | ConvertFrom-Json
         $LeaseId = [string] $LeaseState.lease_id
+        if ($LeaseState.lease_started_at) {
+            $LeaseStartedAt = [int64] $LeaseState.lease_started_at
+            $NowUnix = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+            if (($NowUnix - $LeaseStartedAt) -ge $LeaseRotationSeconds) {
+                $LeaseId = $null
+                $NewLease = $true
+            }
+        }
     }
     catch {
         $LeaseId = $null
@@ -68,6 +81,10 @@ finally {
 if (-not $Lease.access_token -or -not $Lease.account_id -or -not $Lease.lease_id) {
     throw "Broker response is missing official ChatGPT authentication fields."
 }
+$NowUnix = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+if (-not $LeaseStartedAt -or -not $LeaseId -or ([string] $Lease.lease_id) -ne $LeaseId) {
+    $LeaseStartedAt = $NowUnix
+}
 
 $AuthPayload = [ordered] @{
     auth_mode      = "chatgptAuthTokens"
@@ -84,6 +101,7 @@ $AuthPayload = [ordered] @{
 $LeasePayload = [ordered] @{
     lease_id                = [string] $Lease.lease_id
     lease_expires_at        = $Lease.lease_expires_at
+    lease_started_at        = $LeaseStartedAt
     account_alias           = [string] $Lease.account_alias
     access_token_expires_at = $Lease.access_token_expires_at
 }

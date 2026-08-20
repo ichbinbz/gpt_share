@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 
-VERSION = "0.1.4"
+VERSION = "0.1.5"
 GITHUB_REPOSITORY = "ichbinbz/gpt_share"
 INSTALL_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = INSTALL_DIR / "config.json"
@@ -41,6 +41,7 @@ USER_INPUT_FIELDS = (
 )
 USAGE_FIELDS = TOKEN_FIELDS + USER_INPUT_FIELDS
 CHINA_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
+DEFAULT_LEASE_ROTATION_SECONDS = 86400
 
 
 def private_directory(path: Path) -> None:
@@ -379,10 +380,20 @@ def synchronize(config_path: Path = CONFIG_PATH, *, new_lease: bool = False, qui
     lease_path = client_home / "cws-lease.json"
 
     lease_id = None
+    lease_started_at: int | None = None
     if not new_lease and lease_path.is_file():
         try:
-            lease_id = json.loads(lease_path.read_text(encoding="utf-8")).get("lease_id")
-        except (OSError, json.JSONDecodeError, AttributeError):
+            lease_state = json.loads(lease_path.read_text(encoding="utf-8"))
+            lease_id = lease_state.get("lease_id")
+            if lease_state.get("lease_started_at") is not None:
+                lease_started_at = int(lease_state["lease_started_at"])
+                rotation_seconds = max(
+                    3600, int(config.get("lease_rotation_seconds") or DEFAULT_LEASE_ROTATION_SECONDS)
+                )
+                if int(datetime.now(timezone.utc).timestamp()) - lease_started_at >= rotation_seconds:
+                    lease_id = None
+                    new_lease = True
+        except (OSError, json.JSONDecodeError, AttributeError, TypeError, ValueError):
             lease_id = None
     body: dict[str, Any] = {"device_id": f"{socket.gethostname()}/{getpass.getuser()}"}
     client_ip = local_ipv4()
@@ -398,9 +409,13 @@ def synchronize(config_path: Path = CONFIG_PATH, *, new_lease: bool = False, qui
         body=body,
     )
     auth_payload = make_auth_payload(lease)
+    now_unix = int(datetime.now(timezone.utc).timestamp())
+    if lease_started_at is None or not lease_id or str(lease["lease_id"]) != str(lease_id):
+        lease_started_at = now_unix
     lease_payload = {
         "lease_id": str(lease["lease_id"]),
         "lease_expires_at": lease.get("lease_expires_at"),
+        "lease_started_at": lease_started_at,
         "account_alias": str(lease.get("account_alias") or ""),
         "access_token_expires_at": lease.get("access_token_expires_at"),
     }
@@ -665,6 +680,7 @@ def setup(
         "codex_home": str(expanded_path(codex_home)),
         "client_home": str(expanded_path(client_home)),
         "vscode_path": vscode_path,
+        "lease_rotation_seconds": DEFAULT_LEASE_ROTATION_SECONDS,
         "client_version": VERSION,
     }
     write_json_atomic(config_path, config)

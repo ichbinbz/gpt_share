@@ -457,6 +457,8 @@
   "codexEmployeeUsage": {
     "title": "Codex 员工 Token 使用量",
     "employees": "员工令牌",
+    "onlyActive": "只显示有活动记录",
+    "noActive": "没有找到有活动记录的员工令牌。",
     "refresh": "刷新统计",
     "notice": "按服务器签发的员工设备令牌归属。员工端只在本机计算用户消息数、字符数和文本 Token 估算值，仅上报数值及散列会话 ID，不上传对话内容；自然周从北京时间周一 00:00 开始，自然月从每月 1 日 00:00 开始。",
     "updatedAt": "更新时间",

@@ -3,6 +3,7 @@ import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 from scripts.codex_plus_broker import (
     DailySessionUsage,
@@ -107,6 +108,64 @@ def test_account_selection_penalizes_active_leases_for_equal_allowance():
     assert account_selection_key(usage, 0) < account_selection_key(usage, 2)
 
 
+def test_lease_rotation_rebalances_after_24_hours(monkeypatch):
+    now = 2_000_000_000
+    broker = TokenBroker.__new__(TokenBroker)
+    broker.settings = SimpleNamespace(
+        lease_seconds=28_800,
+        lease_rotation_seconds=86_400,
+    )
+    broker.accounts = {"account-01": "one", "account-02": "two"}
+    broker.state_lock = asyncio.Lock()
+    device_hash = __import__("hashlib").sha256(b"pc/user").hexdigest()
+    state = {
+        "leases": {
+            "expired-affinity": {
+                "account_alias": "account-01",
+                "device_token_id": "device-a",
+                "client_device_hash": device_hash,
+                "created_at": now - 86_401,
+                "expires_at": now + 100,
+            },
+            "other-active-user": {
+                "account_alias": "account-01",
+                "device_token_id": "device-b",
+                "client_device_hash": "other",
+                "created_at": now,
+                "expires_at": now + 100,
+            },
+        }
+    }
+    saved = {}
+    broker._load_state = lambda: state
+    broker._save_state = lambda value: saved.update(value)
+
+    async def snapshot(account):
+        account_id = "acct-one" if account == "one" else "acct-two"
+        access_token = jwt(
+            {
+                "exp": now + 3600,
+                "https://api.openai.com/auth": {"chatgpt_account_id": account_id},
+            }
+        )
+        usage = {"rate_limit": {"primary_window": {"used_percent": 20, "reset_after_seconds": 3600}}}
+        return {"tokens": {"access_token": access_token}}, usage
+
+    broker._account_snapshot = snapshot
+    monkeypatch.setattr("scripts.codex_plus_broker.time.time", lambda: now)
+    result = asyncio.run(
+        broker.lease(
+            DeviceIdentity(token_id="device-a", label="employee-a"),
+            "pc/user",
+            "expired-affinity",
+        )
+    )
+    assert result["lease_id"] != "expired-affinity"
+    assert result["account_alias"] == "account-02"
+    assert "expired-affinity" not in saved["leases"]
+    assert saved["leases"][result["lease_id"]]["created_at"] == now
+
+
 def test_sync_source_never_mentions_server_refresh_field_in_output(tmp_path: Path):
     payload = codex_auth_payload(jwt({"exp": 2_000_000_000}), "acct-test")
     rendered = json.dumps(payload)
@@ -162,6 +221,9 @@ def test_quota_dashboard_keeps_admin_token_in_tab_session_only():
     assert "localStorage" not in dashboard
     assert "access_token" not in dashboard
     assert "account.email" in dashboard
+    assert 'id="brokerVersion"' in dashboard
+    assert 'id="onlyActive"' in dashboard
+    assert "hasActivity" in dashboard
 
 
 def test_empty_account_status_can_count_active_leases():

@@ -174,6 +174,18 @@ def test_windows_client_checks_github_release_and_preserves_token_during_auto_up
     assert "Client auto-update completed" in launcher
 
 
+def test_windows_installer_never_starts_or_waits_for_vscode():
+    installer = read("Install-CwsCodex.ps1")
+    launcher = read("Launch-CwsCodex.ps1")
+    common = read("Common-CwsCodex.ps1")
+    assert "--install-extension" not in installer
+    assert "安装阶段不会启动 VS Code" in installer
+    assert "Find-CwsVsCodeCli" in common
+    assert "--install-extension" in launcher
+    assert "WaitForExit(30000)" in launcher
+    assert "continuing launch" in launcher
+
+
 def test_background_worker_is_hidden_autostart_and_not_tied_to_vscode_lifetime():
     installer = read("Install-CwsCodex.ps1")
     watcher = read("Watch-CwsCodex.ps1")
@@ -184,6 +196,15 @@ def test_background_worker_is_hidden_autostart_and_not_tied_to_vscode_lifetime()
     assert "Report-CwsCodexUsage.ps1" in watcher
     assert 'while (Get-Process -Name "Code"' not in watcher
     assert "System.Threading.Mutex" in watcher
+
+
+def test_windows_client_rotates_account_lease_every_24_hours():
+    sync = read("Sync-CwsCodex.ps1")
+    installer = read("Install-CwsCodex.ps1")
+    assert "$LeaseRotationSeconds = 86400" in sync
+    assert "lease_started_at" in sync
+    assert "-ge $LeaseRotationSeconds" in sync
+    assert "lease_rotation_seconds = 86400" in installer
 
 
 def test_shortcuts_use_chinese_names_custom_icon_and_remove_legacy_names():

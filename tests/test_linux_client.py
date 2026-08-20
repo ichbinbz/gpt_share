@@ -2,6 +2,7 @@ import importlib.util
 import json
 import os
 import tarfile
+import time
 from pathlib import Path
 
 import pytest
@@ -61,6 +62,52 @@ def test_linux_auth_payload_matches_official_codex_format():
     assert payload["tokens"]["access_token"] == "access"
     assert payload["tokens"]["account_id"] == "account"
     assert payload["tokens"]["refresh_token"] == ""
+
+
+def test_linux_client_requests_new_lease_after_24_hours(tmp_path, monkeypatch):
+    install_dir = tmp_path / "install"
+    codex_home = tmp_path / ".codex"
+    client_home = tmp_path / ".cws-codex"
+    install_dir.mkdir()
+    codex_home.mkdir()
+    client_home.mkdir()
+    config_path = install_dir / "config.json"
+    MODULE.write_json_atomic(
+        config_path,
+        {
+            "broker_url": "http://broker",
+            "proxy_url": "",
+            "codex_home": str(codex_home),
+            "client_home": str(client_home),
+            "lease_rotation_seconds": 86400,
+        },
+    )
+    (install_dir / "device-token").write_text("cwsdt_test-token-long-enough-123456", encoding="utf-8")
+    MODULE.write_json_atomic(
+        client_home / "cws-lease.json",
+        {"lease_id": "old-lease", "lease_started_at": int(time.time()) - 86401},
+    )
+    requested = {}
+
+    def request_json(_url, **kwargs):
+        requested.update(kwargs["body"])
+        return {
+            "lease_id": "new-lease",
+            "access_token": "access",
+            "account_id": "account",
+            "account_alias": "account-02",
+        }
+
+    monkeypatch.setattr(MODULE, "request_json", request_json)
+    monkeypatch.setattr(MODULE, "initialize_auth_backup", lambda *_args: None)
+    monkeypatch.setattr(MODULE, "initialize_usage_baseline", lambda *_args: None)
+    monkeypatch.setattr(MODULE, "mark_managed_auth", lambda *_args: None)
+    monkeypatch.setattr(MODULE, "local_ipv4", lambda: None)
+    MODULE.synchronize(config_path, quiet=True)
+    assert "lease_id" not in requested
+    lease = json.loads((client_home / "cws-lease.json").read_text(encoding="utf-8"))
+    assert lease["lease_id"] == "new-lease"
+    assert lease["lease_started_at"] >= int(time.time()) - 5
 
 
 def test_linux_usage_reader_uses_latest_counter_and_hashes_session_name(tmp_path):

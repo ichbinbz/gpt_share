@@ -2,7 +2,11 @@
   <n-card :title="$t('codexEmployeeUsage.title')">
     <template #header-extra>
       <n-space>
-        <n-tag>{{ $t('codexEmployeeUsage.employees') }}: {{ status?.devices.length ?? 0 }}</n-tag>
+        <n-tag v-if="status?.broker_version" type="success">Broker v{{ status.broker_version }}</n-tag>
+        <n-checkbox v-model:checked="onlyActive">{{ $t('codexEmployeeUsage.onlyActive') }}</n-checkbox>
+        <n-tag>
+          {{ $t('codexEmployeeUsage.employees') }}: {{ visibleDevices.length }}/{{ status?.devices.length ?? 0 }}
+        </n-tag>
         <n-tag type="info">{{ $t('codexEmployeeUsage.total') }}: {{ formatTokens(totalTokens) }}</n-tag>
         <n-button size="small" :loading="loading" @click="refreshData">
           {{ $t('codexEmployeeUsage.refresh') }}
@@ -20,7 +24,10 @@
       </template>
     </n-alert>
 
-    <n-empty v-if="!status?.devices.length" :description="$t('codexEmployeeUsage.empty')" />
+    <n-empty
+      v-if="!visibleDevices.length"
+      :description="$t(onlyActive && status?.devices.length ? 'codexEmployeeUsage.noActive' : 'codexEmployeeUsage.empty')"
+    />
     <div v-else class="overflow-x-auto">
       <n-table striped size="small" :single-line="false">
         <thead>
@@ -41,7 +48,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="device in status.devices" :key="device.device_token_id">
+          <tr v-for="device in visibleDevices" :key="device.device_token_id">
             <td>
               <strong>{{ device.employee_name || device.device_label }}</strong>
               <div v-if="device.employee_name" class="font-mono text-xs opacity-70">{{ device.device_label }}</div>
@@ -86,11 +93,24 @@ import { CodexDeviceUsage, CodexDeviceUsageStatus, getCodexDeviceUsage } from '@
 
 const status = ref<CodexDeviceUsageStatus>();
 const loading = ref(false);
+const onlyActive = ref(true);
 const { t } = useI18n();
 let timer: number | undefined;
 
-const totalTokens = computed(
-  () => status.value?.devices.reduce((total, device) => total + device.total_tokens, 0) ?? 0,
+const hasActivity = (device: CodexDeviceUsage) =>
+  Boolean(
+    device.last_seen_at ||
+      device.last_reported_at ||
+      device.lease_count ||
+      device.report_count ||
+      device.session_count,
+  );
+const visibleDevices = computed(() => {
+  const devices = status.value?.devices ?? [];
+  return onlyActive.value ? devices.filter(hasActivity) : devices;
+});
+const totalTokens = computed(() =>
+  visibleDevices.value.reduce((total, device) => total + device.total_tokens, 0),
 );
 const formatTokens = (value: number) => new Intl.NumberFormat().format(value || 0);
 const formatUserInput = (

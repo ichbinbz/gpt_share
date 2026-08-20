@@ -76,3 +76,27 @@ def test_normalizes_employee_user_input_and_period_usage():
     assert device["weekly"]["user_message_count"] == 2
     assert device["monthly"]["total_tokens"] == 300
     assert device["week_start_date"] == "2026-08-17"
+
+
+def test_device_status_exposes_broker_version(monkeypatch):
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"version": "0.1.5", "devices": [], "fetched_at": 123}
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def get(self, *_args, **_kwargs):
+            return Response()
+
+    monkeypatch.setenv("CWS_CODEX_ADMIN_TOKEN", "admin")
+    monkeypatch.setattr(MODULE.httpx, "AsyncClient", lambda **_kwargs: Client())
+    status = asyncio.run(MODULE.get_codex_device_usage())
+    assert status["broker_version"] == "0.1.5"

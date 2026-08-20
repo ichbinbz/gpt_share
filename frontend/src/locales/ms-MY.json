@@ -436,6 +436,8 @@
   "codexEmployeeUsage": {
     "title": "Penggunaan token pekerja Codex",
     "employees": "Token pekerja",
+    "onlyActive": "Tunjukkan yang aktif sahaja",
+    "noActive": "Tiada token pekerja dengan rekod aktiviti.",
     "refresh": "Segar semula penggunaan",
     "notice": "Penggunaan dikaitkan dengan token peranti pekerja. Kiraan mesej, aksara dan anggaran token teks dibuat secara setempat; hanya nilai angka dan ID sesi yang dicincang dihantar, bukan kandungan perbualan.",
     "updatedAt": "Dikemas kini",

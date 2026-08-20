@@ -33,6 +33,31 @@ if (-not $VsCodePath) {
     throw "未找到 Visual Studio Code，请先安装 VS Code。"
 }
 
+$InstallExtension = $null -eq $Config.install_extension -or [bool] $Config.install_extension
+$ExtensionRoot = Join-Path $env:USERPROFILE ".vscode\extensions"
+$ExtensionInstalled = @(Get-ChildItem -LiteralPath $ExtensionRoot -Directory -Filter "openai.chatgpt-*" -ErrorAction SilentlyContinue).Count -gt 0
+if ($InstallExtension -and -not $ExtensionInstalled) {
+    $VsCodeCli = Find-CwsVsCodeCli -VsCodePath $VsCodePath
+    if ($VsCodeCli) {
+        try {
+            Write-CwsLaunchLog "Installing Codex extension from the VS Code CLI before launch."
+            $ExtensionProcess = Start-Process -FilePath $VsCodeCli -ArgumentList @(
+                "--install-extension", "openai.chatgpt", "--force"
+            ) -WindowStyle Hidden -PassThru
+            if (-not $ExtensionProcess.WaitForExit(30000)) {
+                Stop-Process -Id $ExtensionProcess.Id -Force -ErrorAction SilentlyContinue
+                Write-CwsLaunchLog "Codex extension installation timed out after 30 seconds; continuing launch."
+            }
+            elseif ($ExtensionProcess.ExitCode -ne 0) {
+                Write-CwsLaunchLog "Codex extension installer returned exit code $($ExtensionProcess.ExitCode); continuing launch."
+            }
+        }
+        catch {
+            Write-CwsLaunchLog ("Codex extension installation failed; continuing launch: " + $_.Exception.Message)
+        }
+    }
+}
+
 $SyncSucceeded = $true
 try {
     & (Join-Path $PSScriptRoot "Sync-CwsCodex.ps1") -ConfigPath $ConfigPath

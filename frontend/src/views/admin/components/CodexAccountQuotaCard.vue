@@ -2,6 +2,7 @@
   <n-card :title="$t('codexQuota.title')">
     <template #header-extra>
       <n-space>
+        <n-tag v-if="status?.broker_version" type="success">Broker v{{ status.broker_version }}</n-tag>
         <n-tag>{{ $t('codexQuota.accounts') }}: {{ status?.accounts.length ?? 0 }}</n-tag>
         <n-tag type="success">
           {{ $t('codexQuota.available') }}: {{ availableCount }}

@@ -120,6 +120,7 @@ async def get_codex_broker_status(refresh: bool = False) -> dict[str, Any]:
     return {
         "configured": True,
         "reachable": True,
+        "broker_version": str(payload.get("version")) if payload.get("version") else None,
         "accounts": [normalize_codex_account(account) for account in payload["accounts"]],
         "fetched_at": _number(payload.get("fetched_at")) or time.time(),
         "error": None,
@@ -226,6 +227,7 @@ async def get_codex_device_usage() -> dict[str, Any]:
     return {
         "configured": True,
         "reachable": True,
+        "broker_version": str(payload.get("version")) if payload.get("version") else None,
         "devices": normalized,
         "fetched_at": _number(payload.get("fetched_at")) or time.time(),
         "error": None,

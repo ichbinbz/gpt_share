@@ -268,6 +268,26 @@ function Find-CwsVsCode {
     return $null
 }
 
+function Find-CwsVsCodeCli {
+    param([string] $VsCodePath)
+
+    if ($VsCodePath) {
+        $Expanded = [Environment]::ExpandEnvironmentVariables($VsCodePath)
+        if ([System.IO.Path]::GetExtension($Expanded) -ieq ".cmd" -and (Test-Path -LiteralPath $Expanded)) {
+            return $Expanded
+        }
+        $AdjacentCli = Join-Path (Split-Path $Expanded -Parent) "bin\code.cmd"
+        if (Test-Path -LiteralPath $AdjacentCli) {
+            return $AdjacentCli
+        }
+    }
+    $Command = Get-Command code.cmd -ErrorAction SilentlyContinue
+    if ($Command) {
+        return $Command.Source
+    }
+    return $null
+}
+
 function Get-CwsLocalIPv4 {
     $Candidates = New-Object System.Collections.Generic.List[string]
     try {
