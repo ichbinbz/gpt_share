@@ -23,6 +23,7 @@ def test_windows_bundle_contains_one_click_entrypoints():
         "Install-CwsCodex.ps1",
         "Sync-CwsCodex.ps1",
         "Report-CwsCodexUsage.ps1",
+        "Update-CwsCodex.ps1",
         "Diagnose-CwsCodex.ps1",
         "Launch-CwsCodex.ps1",
         "Launch-CwsCodex.cmd",
@@ -150,6 +151,27 @@ def test_usage_reporter_sends_only_cumulative_counters_with_device_token():
     assert "Get-CwsSessionId" in reporter
     assert "prompt" not in reporter.lower()
     assert "message.content" not in reporter.lower()
+    assert "user_text_tokens_estimated" in reporter
+    assert "daily_usage" in reporter
+    assert "Get-CwsEstimatedTextTokens" in reporter
+    assert "payload.message" in reporter
+    assert "Body.prompt" not in reporter
+
+
+def test_windows_client_checks_github_release_and_preserves_token_during_auto_update():
+    updater = read("Update-CwsCodex.ps1")
+    installer = read("Install-CwsCodex.ps1")
+    launcher = read("Launch-CwsCodex.ps1")
+    assert "api.github.com/repos/ichbinbz/gpt_share/releases/latest" in updater
+    assert "CWS-Codex-Setup-v$LatestVersion.exe" in updater
+    assert "System.Windows.Forms.MessageBox" in updater
+    assert 'ArgumentList @("/S", "/AUTOUPDATE")' in updater
+    assert "sha256:" in updater
+    assert "[switch] $AutoUpdate" in installer
+    assert "$KeepExisting = $AutoUpdate" in installer
+    assert 'client_version = $ClientVersion' in installer
+    assert '"Update-CwsCodex.ps1"' in installer
+    assert "Client auto-update completed" in launcher
 
 
 def test_background_worker_is_hidden_autostart_and_not_tied_to_vscode_lifetime():

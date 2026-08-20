@@ -142,6 +142,9 @@ def normalize_codex_device_usage(payload: Any) -> dict[str, Any] | None:
         "output_tokens",
         "reasoning_output_tokens",
         "total_tokens",
+        "user_message_count",
+        "user_text_characters",
+        "user_text_tokens_estimated",
     )
     result: dict[str, Any] = {
         "device_token_id": token_id,
@@ -158,6 +161,18 @@ def normalize_codex_device_usage(payload: Any) -> dict[str, Any] | None:
     }
     for field in integer_fields:
         result[field] = max(0, int(_number(payload.get(field)) or 0))
+    for period in ("weekly", "monthly"):
+        source = payload.get(period) if isinstance(payload.get(period), dict) else {}
+        result[period] = {
+            field: max(0, int(_number(source.get(field)) or 0)) for field in integer_fields[3:]
+        }
+    result["usage_timezone"] = str(payload.get("usage_timezone") or "Asia/Shanghai")
+    result["week_start_date"] = (
+        str(payload.get("week_start_date")) if payload.get("week_start_date") else None
+    )
+    result["month_start_date"] = (
+        str(payload.get("month_start_date")) if payload.get("month_start_date") else None
+    )
     return result
 
 

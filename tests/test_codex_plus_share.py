@@ -1,9 +1,11 @@
 import base64
 import asyncio
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from scripts.codex_plus_broker import (
+    DailySessionUsage,
     DeviceIdentity,
     DeviceUsageStore,
     SessionTokenUsage,
@@ -202,6 +204,60 @@ def test_device_usage_is_attributed_by_token_and_idempotent(tmp_path: Path):
     updated = asyncio.run(store.summary({employee.token_id}))[0]
     assert updated["total_tokens"] == 190
     assert updated["session_count"] == 1
+
+
+def test_device_usage_accepts_legacy_reports_without_new_fields(tmp_path: Path):
+    store = DeviceUsageStore(tmp_path / "usage.json")
+    employee = DeviceIdentity(token_id="legacy-device", label="legacy")
+    legacy = SessionTokenUsage(session_id="old-client", input_tokens=10, total_tokens=10)
+    asyncio.run(store.record(employee, [legacy]))
+    summary = asyncio.run(store.summary({employee.token_id}))[0]
+    assert summary["total_tokens"] == 10
+    assert summary["user_message_count"] == 0
+    assert summary["weekly"]["total_tokens"] == 0
+    assert summary["monthly"]["total_tokens"] == 0
+
+
+def test_device_usage_summarizes_daily_week_month_and_user_input(tmp_path: Path):
+    store = DeviceUsageStore(tmp_path / "usage.json")
+    employee = DeviceIdentity(token_id="daily-device", label="daily")
+    today = datetime.now(timezone(timedelta(hours=8))).date()
+    old_date = today - timedelta(days=40)
+    usage = SessionTokenUsage(
+        session_id="daily-session",
+        input_tokens=130,
+        output_tokens=20,
+        total_tokens=150,
+        user_message_count=3,
+        user_text_characters=24,
+        user_text_tokens_estimated=12,
+        daily_usage=[
+            DailySessionUsage(
+                date=today.isoformat(),
+                input_tokens=100,
+                output_tokens=20,
+                total_tokens=120,
+                user_message_count=2,
+                user_text_characters=20,
+                user_text_tokens_estimated=10,
+            ),
+            DailySessionUsage(
+                date=old_date.isoformat(),
+                input_tokens=30,
+                total_tokens=30,
+                user_message_count=1,
+                user_text_characters=4,
+                user_text_tokens_estimated=2,
+            ),
+        ],
+    )
+    asyncio.run(store.record(employee, [usage]))
+    asyncio.run(store.record(employee, [usage]))
+    summary = asyncio.run(store.summary({employee.token_id}))[0]
+    assert summary["total_tokens"] == 150
+    assert summary["user_message_count"] == 3
+    assert summary["weekly"]["total_tokens"] == 120
+    assert summary["monthly"]["user_text_tokens_estimated"] == 10
 
 
 def test_device_usage_history_is_marked_revoked_when_token_is_disabled(tmp_path: Path):

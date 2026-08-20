@@ -17,8 +17,8 @@
 
 ## 当前版本
 
-- Windows / Ubuntu 员工端：`v0.1.3`
-- Codex Broker 服务端：`v0.1.3`
+- Windows / Ubuntu 员工端：`v0.1.4`
+- Codex Broker 服务端：`v0.1.4`
 
 ## 主要功能
 
@@ -27,6 +27,8 @@
 - **额度感知调度**：综合剩余额度、距离重置的时间和当前活跃租约选择账号；优先消耗即将重置且余量充足的账号。
 - **账号状态可视化**：管理后台显示账号真实邮箱、别名、主/次额度窗口、重置时间、健康状态和调度使用分。
 - **跨平台员工端**：提供 Windows 图形安装器和 Ubuntu/Linux 客户端，支持自动同步、用量上报、诊断和卸载。
+- **隐私安全的员工统计**：在本机计算用户消息数、字符数和文本 Token 估算值，只上传数值；服务端按北京时间自然周、自然月和累计展示。
+- **客户端自动更新**：启动时检查 GitHub 最新 Release，用户确认后自动更新并保留设备令牌、代理配置和历史。
 - **复用原生 VS Code 体验**：不创建独立用户配置目录，不改变主题、扩展、设置、历史目录和窗口恢复行为，仅通过 `CODEX_HOME` 切换公司 Codex 登录凭据。
 
 ## 发布包
@@ -35,11 +37,11 @@
 
 | 文件 | 用途 |
 | --- | --- |
-| `CWS-Codex-Release-v0.1.3.zip` | Windows 推荐分发包，包含图形安装器和简明使用说明 |
-| `CWS-Codex-Setup-v0.1.3.exe` | Windows 员工端安装器 |
-| `CWS-Codex-Windows-v0.1.3.zip` | Windows 脚本版及故障排查备用包 |
-| `CWS-Codex-Linux-v0.1.3.tar.gz` | Ubuntu/Linux 员工端 |
-| `CWS-Codex-Server-v0.1.3.tar.gz` | Codex Broker 服务端部署包 |
+| `CWS-Codex-Release-v0.1.4.zip` | Windows 推荐分发包，包含图形安装器和简明使用说明 |
+| `CWS-Codex-Setup-v0.1.4.exe` | Windows 员工端安装器，启动时可从 GitHub Release 自动更新 |
+| `CWS-Codex-Windows-v0.1.4.zip` | Windows 脚本版及故障排查备用包 |
+| `CWS-Codex-Linux-v0.1.4.tar.gz` | Ubuntu/Linux 员工端，支持图形更新提示 |
+| `CWS-Codex-Server-v0.1.4.tar.gz` | Codex Broker 服务端部署包，兼容 v0.1.3 客户端 |
 
 Windows 员工通常只需解压 Release 包、双击安装器并填写管理员分配的设备令牌。Linux 员工端解压后以普通用户运行 `./install.sh`。
 

@@ -20,7 +20,7 @@ import tempfile
 import time
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +45,13 @@ TOKEN_FIELDS = (
     "reasoning_output_tokens",
     "total_tokens",
 )
+USER_INPUT_FIELDS = (
+    "user_message_count",
+    "user_text_characters",
+    "user_text_tokens_estimated",
+)
+USAGE_FIELDS = TOKEN_FIELDS + USER_INPUT_FIELDS
+USAGE_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
 
 
 def _b64url_json(value: str) -> dict[str, Any]:
@@ -176,14 +183,23 @@ class LeaseRequest(BaseModel):
     client_ip: str | None = Field(default=None, max_length=45)
 
 
-class SessionTokenUsage(BaseModel):
-    session_id: str = Field(min_length=1, max_length=200)
+class DailySessionUsage(BaseModel):
+    date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     input_tokens: int = Field(default=0, ge=0, le=10**15)
     cached_input_tokens: int = Field(default=0, ge=0, le=10**15)
     cache_write_input_tokens: int = Field(default=0, ge=0, le=10**15)
     output_tokens: int = Field(default=0, ge=0, le=10**15)
     reasoning_output_tokens: int = Field(default=0, ge=0, le=10**15)
     total_tokens: int = Field(default=0, ge=0, le=10**15)
+    user_message_count: int = Field(default=0, ge=0, le=10**12)
+    user_text_characters: int = Field(default=0, ge=0, le=10**15)
+    user_text_tokens_estimated: int = Field(default=0, ge=0, le=10**15)
+
+
+class SessionTokenUsage(DailySessionUsage):
+    session_id: str = Field(min_length=1, max_length=200)
+    date: str = Field(default="1970-01-01", exclude=True)
+    daily_usage: list[DailySessionUsage] = Field(default_factory=list, max_length=4000)
 
 
 class UsageReport(BaseModel):
@@ -211,9 +227,9 @@ class DeviceUsageStore:
         try:
             payload = json.loads(self.path.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError, OSError):
-            return {"version": 1, "devices": {}}
+            return {"version": 2, "devices": {}}
         if not isinstance(payload, dict) or not isinstance(payload.get("devices"), dict):
-            return {"version": 1, "devices": {}}
+            return {"version": 2, "devices": {}}
         return payload
 
     @staticmethod
@@ -272,6 +288,7 @@ class DeviceUsageStore:
         now = time.time()
         async with self.lock:
             state = self._load()
+            state["version"] = 2
             device = self._upsert_device(state, identity, now)
             device["last_lease_at"] = now
             device["lease_count"] = int(device.get("lease_count", 0)) + 1
@@ -289,6 +306,7 @@ class DeviceUsageStore:
         now = time.time()
         async with self.lock:
             state = self._load()
+            state["version"] = 2
             device = self._upsert_device(state, identity, now)
             device.setdefault("first_reported_at", now)
             device["last_reported_at"] = now
@@ -299,9 +317,28 @@ class DeviceUsageStore:
             for item in sessions:
                 incoming = item.model_dump() if hasattr(item, "model_dump") else item.dict()
                 session_id = incoming.pop("session_id")
+                incoming_days = incoming.pop("daily_usage", [])
+                incoming.pop("date", None)
                 current = stored_sessions.setdefault(session_id, {})
-                for field in TOKEN_FIELDS:
+                for field in USAGE_FIELDS:
                     current[field] = max(int(current.get(field, 0)), int(incoming.get(field, 0)))
+                stored_days = current.setdefault("daily_usage", {})
+                if not isinstance(stored_days, dict):
+                    stored_days = {}
+                    current["daily_usage"] = stored_days
+                for incoming_day in incoming_days:
+                    if isinstance(incoming_day, dict):
+                        day = dict(incoming_day)
+                    elif hasattr(incoming_day, "model_dump"):
+                        day = incoming_day.model_dump()
+                    else:
+                        day = incoming_day.dict()
+                    date_key = str(day.pop("date"))
+                    stored_day = stored_days.setdefault(date_key, {})
+                    for field in USAGE_FIELDS:
+                        stored_day[field] = max(
+                            int(stored_day.get(field, 0)), int(day.get(field, 0))
+                        )
                 current["updated_at"] = now
             atomic_write_json(self.path, state)
             return {
@@ -320,6 +357,9 @@ class DeviceUsageStore:
         else:
             registry = registered_devices
         results: list[dict[str, Any]] = []
+        today = datetime.now(USAGE_TIMEZONE).date()
+        week_start = today - timedelta(days=today.weekday())
+        month_start = today.replace(day=1)
         state_devices = state.get("devices", {})
         token_ids = set(state_devices) | set(registry)
         for token_id in token_ids:
@@ -327,14 +367,32 @@ class DeviceUsageStore:
             if not isinstance(device, dict):
                 continue
             registered = registry.get(token_id, {})
-            totals = {field: 0 for field in TOKEN_FIELDS}
+            totals = {field: 0 for field in USAGE_FIELDS}
+            weekly = {field: 0 for field in USAGE_FIELDS}
+            monthly = {field: 0 for field in USAGE_FIELDS}
             sessions = device.get("sessions")
             if isinstance(sessions, dict):
                 for session in sessions.values():
                     if not isinstance(session, dict):
                         continue
-                    for field in TOKEN_FIELDS:
+                    for field in USAGE_FIELDS:
                         totals[field] += max(0, int(session.get(field, 0)))
+                    daily_usage = session.get("daily_usage")
+                    if not isinstance(daily_usage, dict):
+                        continue
+                    for date_key, daily in daily_usage.items():
+                        if not isinstance(daily, dict):
+                            continue
+                        try:
+                            usage_date = datetime.strptime(str(date_key), "%Y-%m-%d").date()
+                        except ValueError:
+                            continue
+                        for field in USAGE_FIELDS:
+                            value = max(0, int(daily.get(field, 0)))
+                            if week_start <= usage_date <= today:
+                                weekly[field] += value
+                            if month_start <= usage_date <= today:
+                                monthly[field] += value
             results.append(
                 {
                     "device_token_id": str(token_id),
@@ -355,6 +413,11 @@ class DeviceUsageStore:
                     "source_ip": device.get("last_source_ip"),
                     "client_ip_history": device.get("client_ip_history", []),
                     "source_ip_history": device.get("source_ip_history", []),
+                    "usage_timezone": "Asia/Shanghai",
+                    "week_start_date": week_start.isoformat(),
+                    "month_start_date": month_start.isoformat(),
+                    "weekly": weekly,
+                    "monthly": monthly,
                     **totals,
                 }
             )
@@ -697,7 +760,7 @@ def request_source_ip(request: FastAPIRequest) -> str | None:
 settings = BrokerSettings.from_env()
 broker = TokenBroker(settings)
 usage_store = DeviceUsageStore(settings.usage_state_file)
-app = FastAPI(title="CWS Codex Plus Broker", version="0.1.3")
+app = FastAPI(title="CWS Codex Plus Broker", version="0.1.4")
 
 
 def _legacy_device_identity(supplied: str) -> DeviceIdentity:

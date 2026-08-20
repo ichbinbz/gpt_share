@@ -91,12 +91,32 @@ export type CodexDeviceUsage = {
   output_tokens: number;
   reasoning_output_tokens: number;
   total_tokens: number;
+  user_message_count: number;
+  user_text_characters: number;
+  user_text_tokens_estimated: number;
+  weekly: CodexUsagePeriod;
+  monthly: CodexUsagePeriod;
+  usage_timezone: string;
+  week_start_date: string | null;
+  month_start_date: string | null;
   first_reported_at: number | null;
   last_reported_at: number | null;
   first_seen_at: number | null;
   last_seen_at: number | null;
   client_ip: string | null;
   source_ip: string | null;
+};
+
+export type CodexUsagePeriod = {
+  input_tokens: number;
+  cached_input_tokens: number;
+  cache_write_input_tokens: number;
+  output_tokens: number;
+  reasoning_output_tokens: number;
+  total_tokens: number;
+  user_message_count: number;
+  user_text_characters: number;
+  user_text_tokens_estimated: number;
 };
 
 export type CodexDeviceUsageStatus = {

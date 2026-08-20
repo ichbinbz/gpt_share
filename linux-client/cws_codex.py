@@ -12,14 +12,17 @@ import shutil
 import socket
 import subprocess
 import sys
+import tarfile
+import tempfile
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 
-VERSION = "0.1.3"
+VERSION = "0.1.4"
+GITHUB_REPOSITORY = "ichbinbz/gpt_share"
 INSTALL_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = INSTALL_DIR / "config.json"
 TOKEN_PATH = INSTALL_DIR / "device-token"
@@ -31,6 +34,13 @@ TOKEN_FIELDS = (
     "reasoning_output_tokens",
     "total_tokens",
 )
+USER_INPUT_FIELDS = (
+    "user_message_count",
+    "user_text_characters",
+    "user_text_tokens_estimated",
+)
+USAGE_FIELDS = TOKEN_FIELDS + USER_INPUT_FIELDS
+CHINA_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
 
 
 def private_directory(path: Path) -> None:
@@ -215,6 +225,122 @@ def request_json(
     return value
 
 
+def version_tuple(value: str) -> tuple[int, int, int]:
+    parts = value.strip().lstrip("v").split(".")
+    if len(parts) != 3 or any(not part.isdigit() for part in parts):
+        raise RuntimeError(f"GitHub Release 版本号无效：{value}")
+    return tuple(int(part) for part in parts)  # type: ignore[return-value]
+
+
+def confirm_graphical_update(version: str) -> bool:
+    message = (
+        f"检测到 CWS Codex v{version}。是否立即从 GitHub 下载并自动更新？\n\n"
+        "更新会保留设备令牌、VS Code 配置和历史对话。"
+    )
+    zenity = shutil.which("zenity")
+    if zenity:
+        return subprocess.run(
+            [zenity, "--question", "--title=CWS Codex 客户端更新", f"--text={message}"],
+            check=False,
+        ).returncode == 0
+    if sys.stdin.isatty():
+        return input(f"{message}\n立即更新？[Y/n]：").strip().lower() in {"", "y", "yes"}
+    return False
+
+
+def check_for_update(config_path: Path = CONFIG_PATH, *, force: bool = False) -> bool:
+    config = read_config(config_path)
+    client_home = client_home_from_config(config)
+    state_path = client_home / "update-state.json"
+    now = datetime.now(timezone.utc)
+    if not force and state_path.is_file():
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            checked = datetime.fromisoformat(str(state["last_checked_at"]).replace("Z", "+00:00"))
+            if (now - checked).total_seconds() < 86400:
+                return False
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            pass
+
+    release = request_json(
+        f"https://api.github.com/repos/{GITHUB_REPOSITORY}/releases/latest",
+        proxy_url=str(config.get("proxy_url") or ""),
+    )
+    latest = str(release.get("tag_name") or "").lstrip("v")
+    latest_tuple = version_tuple(latest)
+    write_json_atomic(
+        state_path,
+        {
+            "version": 1,
+            "last_checked_at": now.isoformat(),
+            "latest_version": latest,
+        },
+    )
+    if latest_tuple <= version_tuple(VERSION):
+        return False
+
+    asset_name = f"CWS-Codex-Linux-v{latest}.tar.gz"
+    asset = next(
+        (
+            item
+            for item in release.get("assets", [])
+            if isinstance(item, dict) and item.get("name") == asset_name
+        ),
+        None,
+    )
+    if not asset or not asset.get("browser_download_url"):
+        raise RuntimeError(f"GitHub Release 缺少 Linux 安装包：{asset_name}")
+    url = str(asset["browser_download_url"])
+    expected_prefix = f"https://github.com/{GITHUB_REPOSITORY}/releases/download/"
+    if not url.startswith(expected_prefix):
+        raise RuntimeError("GitHub Release 下载地址未通过安全检查")
+    if not confirm_graphical_update(latest):
+        return False
+
+    proxy_url = str(config.get("proxy_url") or "")
+    proxy_handler = (
+        urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
+        if proxy_url
+        else urllib.request.ProxyHandler({})
+    )
+    opener = urllib.request.build_opener(proxy_handler)
+    with tempfile.TemporaryDirectory(prefix="cws-codex-update-") as temporary:
+        archive_path = Path(temporary) / asset_name
+        request = urllib.request.Request(url, headers={"User-Agent": f"CWS-Codex-Linux/{VERSION}"})
+        with opener.open(request, timeout=180) as response, archive_path.open("wb") as output:
+            shutil.copyfileobj(response, output)
+        digest = str(asset.get("digest") or "")
+        if digest.startswith("sha256:"):
+            actual = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+            if actual != digest.removeprefix("sha256:").lower():
+                raise RuntimeError("下载文件 SHA-256 校验失败")
+        extract_root = Path(temporary) / "extracted"
+        extract_root.mkdir()
+        with tarfile.open(archive_path, "r:gz") as archive:
+            for member in archive.getmembers():
+                target = (extract_root / member.name).resolve()
+                if extract_root.resolve() not in target.parents and target != extract_root.resolve():
+                    raise RuntimeError("Linux 更新包包含不安全路径")
+            archive.extractall(extract_root)
+        installer = next(extract_root.glob("CWS-Codex-Linux-v*/install.sh"), None)
+        if not installer:
+            raise RuntimeError("Linux 更新包缺少 install.sh")
+        command = [
+            str(installer),
+            "--auto-update",
+            "--skip-extension",
+            "--broker-url",
+            str(config["broker_url"]),
+            "--codex-home",
+            str(config["codex_home"]),
+            "--client-home",
+            str(config.get("client_home") or "~/.cws-codex"),
+        ]
+        command.extend(["--proxy-url", proxy_url] if proxy_url else ["--direct"])
+        subprocess.run(command, check=True)
+    return True
+
+
 def find_vscode(configured: str = "") -> str | None:
     candidates = [configured, shutil.which("code"), shutil.which("code-insiders")]
     candidates.extend(("/usr/bin/code", "/snap/bin/code", "/usr/local/bin/code"))
@@ -295,6 +421,39 @@ def safe_token_count(value: Any) -> int:
         return 0
 
 
+def usage_date(value: Any) -> str:
+    try:
+        timestamp = str(value or "").replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(timestamp)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(CHINA_TIMEZONE).date().isoformat()
+    except (TypeError, ValueError):
+        return datetime.now(CHINA_TIMEZONE).date().isoformat()
+
+
+def estimate_user_text_tokens(text: str) -> int:
+    """Estimate plain user text locally without transmitting the message content."""
+    tokens = 0
+    ascii_run = 0
+    for character in text:
+        if character.isascii() and (character.isalnum() or character == "_"):
+            ascii_run += 1
+            continue
+        if ascii_run:
+            tokens += (ascii_run + 3) // 4
+            ascii_run = 0
+        if not character.isspace():
+            tokens += 1
+    if ascii_run:
+        tokens += (ascii_run + 3) // 4
+    return tokens
+
+
+def empty_daily_usage(date: str) -> dict[str, Any]:
+    return {"date": date, **{field: 0 for field in USAGE_FIELDS}}
+
+
 def collect_session_usage(
     sessions_root: Path,
     excluded_session_ids: set[str] | None = None,
@@ -307,10 +466,13 @@ def collect_session_usage(
         if session_id in (excluded_session_ids or set()):
             continue
         latest: dict[str, Any] | None = None
+        previous = {field: 0 for field in TOKEN_FIELDS}
+        daily: dict[str, dict[str, Any]] = {}
+        user_totals = {field: 0 for field in USER_INPUT_FIELDS}
         try:
             with path.open("r", encoding="utf-8", errors="replace") as handle:
                 for line in handle:
-                    if '"token_count"' not in line:
+                    if '"token_count"' not in line and '"user_message"' not in line:
                         continue
                     try:
                         event = json.loads(line)
@@ -319,16 +481,39 @@ def collect_session_usage(
                         total = info.get("total_token_usage")
                         if payload.get("type") == "token_count" and isinstance(total, dict):
                             latest = total
+                            date = usage_date(event.get("timestamp"))
+                            bucket = daily.setdefault(date, empty_daily_usage(date))
+                            for field in TOKEN_FIELDS:
+                                current = safe_token_count(total.get(field))
+                                before = previous[field]
+                                bucket[field] += current - before if current >= before else current
+                                previous[field] = current
+                        elif payload.get("type") == "user_message":
+                            message = payload.get("message")
+                            text = message if isinstance(message, str) else ""
+                            characters = len(text)
+                            estimated = estimate_user_text_tokens(text)
+                            user_totals["user_message_count"] += 1
+                            user_totals["user_text_characters"] += characters
+                            user_totals["user_text_tokens_estimated"] += estimated
+                            date = usage_date(event.get("timestamp"))
+                            bucket = daily.setdefault(date, empty_daily_usage(date))
+                            bucket["user_message_count"] += 1
+                            bucket["user_text_characters"] += characters
+                            bucket["user_text_tokens_estimated"] += estimated
                     except (json.JSONDecodeError, AttributeError):
                         continue
         except OSError:
             continue
-        if latest is None:
+        if latest is None and not user_totals["user_message_count"]:
             continue
+        latest = latest or {}
         record: dict[str, Any] = {
             "session_id": session_id
         }
         record.update({field: safe_token_count(latest.get(field)) for field in TOKEN_FIELDS})
+        record.update(user_totals)
+        record["daily_usage"] = [daily[date] for date in sorted(daily)]
         sessions.append(record)
     return sessions
 
@@ -378,6 +563,14 @@ def append_log(name: str, message: str) -> None:
 
 
 def launch(config_path: Path = CONFIG_PATH) -> int:
+    try:
+        if check_for_update(config_path):
+            os.execv(
+                sys.executable,
+                [sys.executable, str(INSTALL_DIR / "cws_codex.py"), "launch", "--config", str(config_path)],
+            )
+    except Exception as exc:
+        append_log("launch.log", f"Client update check failed: {exc}")
     config = read_config(config_path)
     vscode = find_vscode(str(config.get("vscode_path") or ""))
     if not vscode:
@@ -449,13 +642,15 @@ def setup(
     codex_home: str,
     client_home: str,
     vscode_path: str,
+    keep_existing_token: bool = False,
 ) -> int:
     private_directory(config_path.parent)
     token_path = config_path.parent / "device-token"
-    keep_existing = False
+    keep_existing = keep_existing_token and token_path.is_file()
     if token_path.is_file():
-        answer = input("检测到已保存的设备令牌，是否保留？[Y/n]：").strip().lower()
-        keep_existing = not answer or answer.startswith("y")
+        if not keep_existing_token:
+            answer = input("检测到已保存的设备令牌，是否保留？[Y/n]：").strip().lower()
+            keep_existing = not answer or answer.startswith("y")
     if not keep_existing:
         token = os.environ.get("CWS_CODEX_DEVICE_TOKEN") or getpass.getpass(
             "请输入管理员分配给本机的设备令牌："
@@ -470,6 +665,7 @@ def setup(
         "codex_home": str(expanded_path(codex_home)),
         "client_home": str(expanded_path(client_home)),
         "vscode_path": vscode_path,
+        "client_version": VERSION,
     }
     write_json_atomic(config_path, config)
     initialize_auth_backup(expanded_path(codex_home), expanded_path(client_home))
@@ -554,6 +750,7 @@ def parser() -> argparse.ArgumentParser:
     setup_parser.add_argument("--codex-home", required=True)
     setup_parser.add_argument("--client-home", required=True)
     setup_parser.add_argument("--vscode-path", required=True)
+    setup_parser.add_argument("--keep-existing-token", action="store_true")
     return result
 
 
@@ -586,6 +783,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.codex_home,
                 args.client_home,
                 args.vscode_path,
+                args.keep_existing_token,
             )
     except (RuntimeError, OSError, KeyError) as exc:
         print(f"错误：{exc}", file=sys.stderr)

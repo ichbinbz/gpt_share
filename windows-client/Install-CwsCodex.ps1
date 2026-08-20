@@ -7,12 +7,14 @@
     [switch] $SkipExtensionInstall,
     [switch] $SkipInitialSync,
     [switch] $SkipBackgroundStart,
+    [switch] $AutoUpdate,
     [Security.SecureString] $DeviceToken,
     [string] $DesktopDir,
     [string] $StartupDir
 )
 
 $ErrorActionPreference = "Stop"
+$ClientVersion = "0.1.4"
 . (Join-Path $PSScriptRoot "Common-CwsCodex.ps1")
 $InstallLogPath = Join-Path $env:TEMP "CWS-Codex-Install.log"
 
@@ -35,6 +37,14 @@ trap {
 }
 
 Write-Host "正在安装 CWS Codex 员工端..." -ForegroundColor Cyan
+$ExistingConfigPath = Join-Path $InstallDir "config.json"
+if ($AutoUpdate -and (Test-Path -LiteralPath $ExistingConfigPath)) {
+    $ExistingConfig = Get-Content -LiteralPath $ExistingConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($ExistingConfig.broker_url) { $BrokerUrl = [string] $ExistingConfig.broker_url }
+    if ($null -ne $ExistingConfig.proxy_url) { $ProxyUrl = [string] $ExistingConfig.proxy_url }
+    if ($ExistingConfig.codex_home) { $CodexHome = [string] $ExistingConfig.codex_home }
+    if ($ExistingConfig.client_home) { $ClientHome = [string] $ExistingConfig.client_home }
+}
 Set-CwsPrivateDirectoryAcl -Path $ClientHome
 if (-not (Test-Path -LiteralPath $CodexHome)) {
     New-Item -ItemType Directory -Path $CodexHome -Force | Out-Null
@@ -44,6 +54,7 @@ $PayloadFiles = @(
     "Common-CwsCodex.ps1",
     "Sync-CwsCodex.ps1",
     "Report-CwsCodexUsage.ps1",
+    "Update-CwsCodex.ps1",
     "Diagnose-CwsCodex.ps1",
     "Watch-CwsCodex.ps1",
     "Launch-CwsCodex.ps1",
@@ -81,10 +92,12 @@ catch [System.UnauthorizedAccessException] {
 }
 
 $TokenPath = Join-Path $InstallDir "device-token.dpapi"
-$KeepExisting = $false
+$KeepExisting = $AutoUpdate -and (Test-Path -LiteralPath $TokenPath)
 if (Test-Path -LiteralPath $TokenPath) {
-    $Answer = Read-Host "检测到已保存的设备令牌，是否保留？[Y/n]"
-    $KeepExisting = (-not $Answer) -or $Answer.ToLowerInvariant().StartsWith("y")
+    if (-not $AutoUpdate) {
+        $Answer = Read-Host "检测到已保存的设备令牌，是否保留？[Y/n]"
+        $KeepExisting = (-not $Answer) -or $Answer.ToLowerInvariant().StartsWith("y")
+    }
 }
 if (-not $KeepExisting) {
     $SecureToken = $DeviceToken
@@ -118,12 +131,13 @@ $Config = [ordered] @{
     codex_home = $CodexHome
     client_home = $ClientHome
     vscode_path = $VsCodePath
+    client_version = $ClientVersion
 }
 $ConfigPath = Join-Path $InstallDir "config.json"
 Write-CwsJsonAtomic -Path $ConfigPath -Value $Config
 Set-CwsPrivateDirectoryAcl -Path $InstallDir
 
-if (-not $SkipExtensionInstall) {
+if (-not $SkipExtensionInstall -and -not $AutoUpdate) {
     Write-Host "正在检查并安装 OpenAI Codex VS Code 扩展..."
     try {
         & $VsCodePath --install-extension openai.chatgpt --force | Out-Host

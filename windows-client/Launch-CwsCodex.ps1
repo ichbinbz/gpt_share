@@ -10,6 +10,21 @@ function Write-CwsLaunchLog {
 }
 
 $Config = Get-CwsConfig -ConfigPath $ConfigPath
+$Updater = Join-Path $PSScriptRoot "Update-CwsCodex.ps1"
+if (Test-Path -LiteralPath $Updater) {
+    try {
+        $Updated = & $Updater -ConfigPath $ConfigPath
+        if ($Updated) {
+            Write-CwsLaunchLog "Client auto-update completed; restarting launcher."
+            $RestartArgs = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -ConfigPath `"$ConfigPath`""
+            Start-Process -FilePath "powershell.exe" -ArgumentList $RestartArgs -WindowStyle Hidden
+            return
+        }
+    }
+    catch {
+        Write-CwsLaunchLog ("Client update check failed: " + $_.Exception.Message)
+    }
+}
 $VsCodePath = [Environment]::ExpandEnvironmentVariables([string] $Config.vscode_path)
 if (-not $VsCodePath -or -not (Test-Path -LiteralPath $VsCodePath)) {
     $VsCodePath = Find-CwsVsCode

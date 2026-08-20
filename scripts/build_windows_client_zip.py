@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 UTF8_BOM = b"\xef\xbb\xbf"
-VERSION = "0.1.3"
+VERSION = "0.1.4"
 
 
 def payload_for_windows(path: Path) -> bytes:

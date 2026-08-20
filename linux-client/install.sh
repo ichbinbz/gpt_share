@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.1.3"
+VERSION="0.1.4"
 BROKER_URL="http://codex.cws.internal:8765"
 PROXY_URL="http://192.168.2.38:7897"
 CODEX_HOME="${HOME}/.codex"
 CLIENT_HOME="${HOME}/.cws-codex"
 SKIP_EXTENSION=0
 SKIP_SYNC=0
+AUTO_UPDATE=0
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/cws-codex"
 BIN_DIR="${HOME}/.local/bin"
@@ -26,6 +27,7 @@ while (( $# )); do
         --client-home) CLIENT_HOME="$2"; shift 2 ;;
         --skip-extension) SKIP_EXTENSION=1; shift ;;
         --skip-sync) SKIP_SYNC=1; shift ;;
+        --auto-update) AUTO_UPDATE=1; shift ;;
         -h|--help)
             echo "用法：./install.sh [--broker-url URL] [--proxy-url URL|--direct] [--codex-home PATH] [--client-home PATH] [--skip-extension] [--skip-sync]"
             exit 0
@@ -55,12 +57,16 @@ install -m 755 "$SCRIPT_DIR/uninstall.sh" "$INSTALL_DIR/uninstall.sh"
 install -m 644 "$SCRIPT_DIR/README-Linux.txt" "$INSTALL_DIR/README-Linux.txt"
 ln -sfn "$INSTALL_DIR/cws_codex.py" "$BIN_DIR/cws-codex"
 
-python3 "$INSTALL_DIR/cws_codex.py" setup \
-    --broker-url "$BROKER_URL" \
-    --proxy-url "$PROXY_URL" \
-    --codex-home "$CODEX_HOME" \
-    --client-home "$CLIENT_HOME" \
+SETUP_ARGS=(
+    setup
+    --broker-url "$BROKER_URL"
+    --proxy-url "$PROXY_URL"
+    --codex-home "$CODEX_HOME"
+    --client-home "$CLIENT_HOME"
     --vscode-path "$VSCODE_PATH"
+)
+if (( AUTO_UPDATE == 1 )); then SETUP_ARGS+=(--keep-existing-token); fi
+python3 "$INSTALL_DIR/cws_codex.py" "${SETUP_ARGS[@]}"
 
 cat > "$APPLICATION_DIR/cws-codex.desktop" <<EOF
 [Desktop Entry]

@@ -39,6 +39,19 @@ def test_linux_launcher_reuses_vscode_profile_and_default_codex_history():
     assert "subprocess.Popen(" in source
 
 
+def test_linux_client_checks_github_release_and_preserves_token_on_update():
+    source = (CLIENT / "cws_codex.py").read_text(encoding="utf-8")
+    installer = (CLIENT / "install.sh").read_text(encoding="utf-8")
+    assert "api.github.com/repos/{GITHUB_REPOSITORY}/releases/latest" in source
+    assert "CWS-Codex-Linux-v{latest}.tar.gz" in source
+    assert "confirm_graphical_update" in source
+    assert "sha256:" in source
+    assert '"--auto-update"' in source
+    assert "--keep-existing-token" in source
+    assert "--auto-update) AUTO_UPDATE=1" in installer
+    assert "SETUP_ARGS+=(--keep-existing-token)" in installer
+
+
 def test_linux_auth_payload_matches_official_codex_format():
     payload = MODULE.make_auth_payload(
         {"access_token": "access", "account_id": "account", "lease_id": "lease"}
@@ -63,6 +76,50 @@ def test_linux_usage_reader_uses_latest_counter_and_hashes_session_name(tmp_path
     assert records[0]["total_tokens"] == 25
     assert records[0]["input_tokens"] == 7
     assert len(records[0]["session_id"]) == 64
+
+
+def test_linux_usage_reader_counts_user_text_locally_and_builds_daily_buckets(tmp_path):
+    session = tmp_path / "sessions" / "2026" / "session-user.jsonl"
+    session.parent.mkdir(parents=True)
+    events = [
+        {
+            "timestamp": "2026-08-20T01:00:00Z",
+            "payload": {"type": "user_message", "message": "hello世界"},
+        },
+        {
+            "timestamp": "2026-08-20T01:00:01Z",
+            "payload": {
+                "type": "token_count",
+                "info": {"total_token_usage": {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12}},
+            },
+        },
+        {
+            "timestamp": "2026-08-20T01:00:02Z",
+            "payload": {
+                "type": "token_count",
+                "info": {"total_token_usage": {"input_tokens": 25, "output_tokens": 3, "total_tokens": 28}},
+            },
+        },
+    ]
+    session.write_text("\n".join(json.dumps(event) for event in events), encoding="utf-8")
+    record = MODULE.collect_session_usage(tmp_path / "sessions")[0]
+    assert record["user_message_count"] == 1
+    assert record["user_text_characters"] == 7
+    assert record["user_text_tokens_estimated"] == 4
+    assert record["daily_usage"] == [
+        {
+            "date": "2026-08-20",
+            "input_tokens": 25,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 3,
+            "reasoning_output_tokens": 0,
+            "total_tokens": 28,
+            "user_message_count": 1,
+            "user_text_characters": 7,
+            "user_text_tokens_estimated": 4,
+        }
+    ]
 
 
 def test_linux_auth_backup_restore_and_usage_baseline(tmp_path):

@@ -10,6 +10,7 @@ MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 get_codex_broker_status = MODULE.get_codex_broker_status
 normalize_codex_account = MODULE.normalize_codex_account
+normalize_codex_device_usage = MODULE.normalize_codex_device_usage
 
 
 def test_normalizes_codex_quota_without_exposing_raw_usage():
@@ -54,3 +55,24 @@ def test_missing_admin_token_returns_safe_configuration_status(monkeypatch):
     assert status["configured"] is False
     assert status["reachable"] is False
     assert status["accounts"] == []
+
+
+def test_normalizes_employee_user_input_and_period_usage():
+    device = normalize_codex_device_usage(
+        {
+            "device_token_id": "device-1",
+            "user_message_count": 5,
+            "user_text_characters": 40,
+            "user_text_tokens_estimated": 12,
+            "weekly": {"total_tokens": 100, "user_message_count": 2},
+            "monthly": {"total_tokens": 300, "user_message_count": 4},
+            "week_start_date": "2026-08-17",
+            "month_start_date": "2026-08-01",
+        }
+    )
+    assert device is not None
+    assert device["user_message_count"] == 5
+    assert device["weekly"]["total_tokens"] == 100
+    assert device["weekly"]["user_message_count"] == 2
+    assert device["monthly"]["total_tokens"] == 300
+    assert device["week_start_date"] == "2026-08-17"

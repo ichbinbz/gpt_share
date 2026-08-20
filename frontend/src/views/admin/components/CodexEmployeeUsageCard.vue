@@ -29,6 +29,8 @@
             <th>{{ $t('codexEmployeeUsage.status') }}</th>
             <th>{{ $t('codexEmployeeUsage.clientIp') }}</th>
             <th>{{ $t('codexEmployeeUsage.sourceIp') }}</th>
+            <th>{{ $t('codexEmployeeUsage.userInput') }}</th>
+            <th>{{ $t('codexEmployeeUsage.periodUsage') }}</th>
             <th>{{ $t('codexEmployeeUsage.input') }}</th>
             <th>{{ $t('codexEmployeeUsage.cachedInput') }}</th>
             <th>{{ $t('codexEmployeeUsage.output') }}</th>
@@ -52,6 +54,16 @@
             </td>
             <td class="font-mono">{{ device.client_ip || '—' }}</td>
             <td class="font-mono">{{ device.source_ip || '—' }}</td>
+            <td class="whitespace-nowrap text-xs">
+              <div>{{ $t('codexEmployeeUsage.week') }}: {{ formatUserInput(device.weekly) }}</div>
+              <div>{{ $t('codexEmployeeUsage.month') }}: {{ formatUserInput(device.monthly) }}</div>
+              <div>{{ $t('codexEmployeeUsage.lifetime') }}: {{ formatUserInput(device) }}</div>
+            </td>
+            <td class="whitespace-nowrap text-xs">
+              <div>{{ $t('codexEmployeeUsage.week') }}: {{ formatTokens(device.weekly.total_tokens) }}</div>
+              <div>{{ $t('codexEmployeeUsage.month') }}: {{ formatTokens(device.monthly.total_tokens) }}</div>
+              <div>{{ $t('codexEmployeeUsage.lifetime') }}: {{ formatTokens(device.total_tokens) }}</div>
+            </td>
             <td>{{ formatTokens(device.input_tokens) }}</td>
             <td>{{ formatTokens(device.cached_input_tokens) }}</td>
             <td>{{ formatTokens(device.output_tokens) }}</td>
@@ -68,17 +80,25 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 
 import { CodexDeviceUsage, CodexDeviceUsageStatus, getCodexDeviceUsage } from '@/api/system';
 
 const status = ref<CodexDeviceUsageStatus>();
 const loading = ref(false);
+const { t } = useI18n();
 let timer: number | undefined;
 
 const totalTokens = computed(
   () => status.value?.devices.reduce((total, device) => total + device.total_tokens, 0) ?? 0,
 );
 const formatTokens = (value: number) => new Intl.NumberFormat().format(value || 0);
+const formatUserInput = (
+  value: Pick<CodexDeviceUsage, 'user_message_count' | 'user_text_characters' | 'user_text_tokens_estimated'>,
+) =>
+  `${formatTokens(value.user_message_count)} ${t('codexEmployeeUsage.messages')} · ` +
+  `${formatTokens(value.user_text_characters)} ${t('codexEmployeeUsage.characters')} · ` +
+  `${formatTokens(value.user_text_tokens_estimated)} ${t('codexEmployeeUsage.estimatedTokens')}`;
 const formatTimestamp = (timestamp: number) => new Date(timestamp * 1000).toLocaleString();
 const deviceStatus = (device: CodexDeviceUsage): { key: string; type: 'success' | 'warning' | 'error' } => {
   if (!device.enabled) return { key: 'revoked', type: 'error' };
