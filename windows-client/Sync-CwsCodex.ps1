@@ -10,10 +10,12 @@ $ErrorActionPreference = "Stop"
 $Config = Get-CwsConfig -ConfigPath $ConfigPath
 $DeviceToken = Get-CwsDeviceToken -TokenPath (Join-Path $PSScriptRoot "device-token.dpapi")
 $CodexHome = [Environment]::ExpandEnvironmentVariables([string] $Config.codex_home)
-$LeasePath = Join-Path $CodexHome "cws-lease.json"
+$ClientHome = Get-CwsClientHome -Config $Config
+$LeasePath = Join-Path $ClientHome "cws-lease.json"
 $AuthPath = Join-Path $CodexHome "auth.json"
 
-Set-CwsPrivateDirectoryAcl -Path $CodexHome
+Initialize-CwsAuthBackup -CodexHome $CodexHome -ClientHome $ClientHome
+Initialize-CwsUsageBaseline -CodexHome $CodexHome -ClientHome $ClientHome
 
 $LeaseId = $null
 if (-not $NewLease -and (Test-Path -LiteralPath $LeasePath)) {
@@ -88,7 +90,8 @@ $LeasePayload = [ordered] @{
 
 Write-CwsJsonAtomic -Path $AuthPath -Value $AuthPayload
 Write-CwsJsonAtomic -Path $LeasePath -Value $LeasePayload
-Set-CwsPrivateDirectoryAcl -Path $CodexHome
+Set-CwsManagedAuthMarker -AuthPath $AuthPath -ClientHome $ClientHome
+Set-CwsPrivateDirectoryAcl -Path $ClientHome
 
 if (-not $Quiet) {
     Write-Host "CWS Codex credential synchronized." -ForegroundColor Green

@@ -27,9 +27,13 @@ def test_linux_bundle_contains_expected_entrypoints():
     assert "sudo" in installer
 
 
-def test_linux_launcher_reuses_vscode_profile_and_switches_only_codex_home():
+def test_linux_launcher_reuses_vscode_profile_and_default_codex_history():
     source = (CLIENT / "cws_codex.py").read_text(encoding="utf-8")
+    installer = (CLIENT / "install.sh").read_text(encoding="utf-8")
     assert 'environment["CODEX_HOME"]' in source
+    assert 'CODEX_HOME="${HOME}/.codex"' in installer
+    assert 'CLIENT_HOME="${HOME}/.cws-codex"' in installer
+    assert '"client_home":' in source
     assert "--user-data-dir" not in source
     assert "--new-window" not in source
     assert "subprocess.Popen(" in source
@@ -61,6 +65,51 @@ def test_linux_usage_reader_uses_latest_counter_and_hashes_session_name(tmp_path
     assert len(records[0]["session_id"]) == 64
 
 
+def test_linux_auth_backup_restore_and_usage_baseline(tmp_path):
+    codex_home = tmp_path / ".codex"
+    client_home = tmp_path / ".cws-codex"
+    sessions = codex_home / "sessions"
+    sessions.mkdir(parents=True)
+    old_session = sessions / "old.jsonl"
+    old_session.write_text("{}\n", encoding="utf-8")
+    original_auth = {"original": True}
+    MODULE.write_json_atomic(codex_home / "auth.json", original_auth)
+
+    MODULE.initialize_auth_backup(codex_home, client_home)
+    MODULE.initialize_usage_baseline(codex_home, client_home)
+    MODULE.write_json_atomic(codex_home / "auth.json", {"company": True})
+    MODULE.mark_managed_auth(codex_home / "auth.json", client_home)
+
+    config_path = tmp_path / "config.json"
+    MODULE.write_json_atomic(
+        config_path,
+        {"codex_home": str(codex_home), "client_home": str(client_home)},
+    )
+    baseline = json.loads((client_home / "usage-baseline.json").read_text(encoding="utf-8"))
+    assert MODULE.session_id_for_name(old_session.name) in baseline["excluded_session_ids"]
+    assert MODULE.restore_original_auth(config_path)
+    assert json.loads((codex_home / "auth.json").read_text(encoding="utf-8")) == original_auth
+    assert not (client_home / "original-auth-state.json").exists()
+    assert not (client_home / "usage-baseline.json").exists()
+
+
+def test_linux_restore_does_not_overwrite_auth_changed_after_sync(tmp_path):
+    codex_home = tmp_path / ".codex"
+    client_home = tmp_path / ".cws-codex"
+    MODULE.write_json_atomic(codex_home / "auth.json", {"original": True})
+    MODULE.initialize_auth_backup(codex_home, client_home)
+    MODULE.write_json_atomic(codex_home / "auth.json", {"company": True})
+    MODULE.mark_managed_auth(codex_home / "auth.json", client_home)
+    MODULE.write_json_atomic(codex_home / "auth.json", {"new_login": True})
+    config_path = tmp_path / "config.json"
+    MODULE.write_json_atomic(
+        config_path,
+        {"codex_home": str(codex_home), "client_home": str(client_home)},
+    )
+    assert not MODULE.restore_original_auth(config_path)
+    assert json.loads((codex_home / "auth.json").read_text(encoding="utf-8")) == {"new_login": True}
+
+
 @pytest.mark.skipif(os.name == "nt", reason="Windows does not implement POSIX chmod bits")
 def test_linux_private_files_are_written_with_user_only_permissions(tmp_path):
     path = tmp_path / "private" / "config.json"
@@ -77,3 +126,4 @@ def test_linux_release_archive_has_expected_modes(tmp_path):
         assert entries[f"{ARCHIVE_ROOT}/install.sh"].mode == 0o755
         assert entries[f"{ARCHIVE_ROOT}/cws_codex.py"].mode == 0o755
         assert entries[f"{ARCHIVE_ROOT}/README-Linux.txt"].mode == 0o644
+        assert b"\r\n" not in archive.extractfile(f"{ARCHIVE_ROOT}/install.sh").read()

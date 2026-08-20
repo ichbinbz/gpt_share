@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.1.2"
+VERSION="0.1.3"
 BROKER_URL="http://codex.cws.internal:8765"
 PROXY_URL="http://192.168.2.38:7897"
-CODEX_HOME="${HOME}/.cws-codex"
+CODEX_HOME="${HOME}/.codex"
+CLIENT_HOME="${HOME}/.cws-codex"
 SKIP_EXTENSION=0
 SKIP_SYNC=0
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,10 +23,11 @@ while (( $# )); do
         --proxy-url) PROXY_URL="$2"; shift 2 ;;
         --direct) PROXY_URL=""; shift ;;
         --codex-home) CODEX_HOME="$2"; shift 2 ;;
+        --client-home) CLIENT_HOME="$2"; shift 2 ;;
         --skip-extension) SKIP_EXTENSION=1; shift ;;
         --skip-sync) SKIP_SYNC=1; shift ;;
         -h|--help)
-            echo "用法：./install.sh [--broker-url URL] [--proxy-url URL|--direct] [--codex-home PATH] [--skip-extension] [--skip-sync]"
+            echo "用法：./install.sh [--broker-url URL] [--proxy-url URL|--direct] [--codex-home PATH] [--client-home PATH] [--skip-extension] [--skip-sync]"
             exit 0
             ;;
         *) echo "未知参数：$1" >&2; exit 2 ;;
@@ -47,7 +49,7 @@ if [[ -z "$VSCODE_PATH" ]]; then
 fi
 
 umask 077
-install -d -m 700 "$INSTALL_DIR" "$BIN_DIR" "$APPLICATION_DIR" "$SYSTEMD_DIR" "$CODEX_HOME"
+install -d -m 700 "$INSTALL_DIR" "$BIN_DIR" "$APPLICATION_DIR" "$SYSTEMD_DIR" "$CODEX_HOME" "$CLIENT_HOME"
 install -m 755 "$SCRIPT_DIR/cws_codex.py" "$INSTALL_DIR/cws_codex.py"
 install -m 755 "$SCRIPT_DIR/uninstall.sh" "$INSTALL_DIR/uninstall.sh"
 install -m 644 "$SCRIPT_DIR/README-Linux.txt" "$INSTALL_DIR/README-Linux.txt"
@@ -57,6 +59,7 @@ python3 "$INSTALL_DIR/cws_codex.py" setup \
     --broker-url "$BROKER_URL" \
     --proxy-url "$PROXY_URL" \
     --codex-home "$CODEX_HOME" \
+    --client-home "$CLIENT_HOME" \
     --vscode-path "$VSCODE_PATH"
 
 cat > "$APPLICATION_DIR/cws-codex.desktop" <<EOF

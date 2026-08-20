@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 
-VERSION = "0.1.2"
+VERSION = "0.1.3"
 INSTALL_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = INSTALL_DIR / "config.json"
 TOKEN_PATH = INSTALL_DIR / "device-token"
@@ -74,6 +74,92 @@ def read_device_token(path: Path = TOKEN_PATH) -> str:
 
 def expanded_path(value: str) -> Path:
     return Path(os.path.expandvars(os.path.expanduser(value))).resolve()
+
+
+def client_home_from_config(config: dict[str, Any]) -> Path:
+    return expanded_path(str(config.get("client_home") or "~/.cws-codex"))
+
+
+def session_id_for_name(name: str) -> str:
+    return hashlib.sha256(name.encode("utf-8")).hexdigest()
+
+
+def initialize_auth_backup(codex_home: Path, client_home: Path) -> None:
+    private_directory(client_home)
+    private_directory(codex_home)
+    state_path = client_home / "original-auth-state.json"
+    if state_path.is_file():
+        return
+    auth_path = codex_home / "auth.json"
+    backup_path = client_home / "original-auth.json"
+    had_auth = auth_path.is_file()
+    if had_auth:
+        shutil.copyfile(auth_path, backup_path)
+        backup_path.chmod(0o600)
+    write_json_atomic(state_path, {"version": 1, "had_auth": had_auth})
+
+
+def initialize_usage_baseline(codex_home: Path, client_home: Path) -> None:
+    baseline_path = client_home / "usage-baseline.json"
+    if baseline_path.is_file():
+        return
+    sessions_root = codex_home / "sessions"
+    excluded = sorted(
+        {
+            session_id_for_name(path.name)
+            for path in sessions_root.rglob("*.jsonl")
+        }
+        if sessions_root.is_dir()
+        else set()
+    )
+    write_json_atomic(
+        baseline_path,
+        {"version": 1, "excluded_session_ids": excluded},
+    )
+
+
+def mark_managed_auth(auth_path: Path, client_home: Path) -> None:
+    digest = hashlib.sha256(auth_path.read_bytes()).hexdigest()
+    marker = client_home / "managed-auth.sha256"
+    marker.write_text(digest + "\n", encoding="utf-8")
+    marker.chmod(0o600)
+
+
+def restore_original_auth(config_path: Path = CONFIG_PATH) -> bool:
+    config = read_config(config_path)
+    codex_home = expanded_path(str(config["codex_home"]))
+    client_home = client_home_from_config(config)
+    state_path = client_home / "original-auth-state.json"
+    if not state_path.is_file():
+        return False
+    auth_path = codex_home / "auth.json"
+    marker_path = client_home / "managed-auth.sha256"
+    if auth_path.is_file() and marker_path.is_file():
+        expected = marker_path.read_text(encoding="utf-8").strip()
+        current = hashlib.sha256(auth_path.read_bytes()).hexdigest()
+        if expected and current != expected:
+            print(
+                "警告：当前 Codex 登录凭据已被其他程序修改，为避免覆盖，未恢复安装前凭据。",
+                file=sys.stderr,
+            )
+            return False
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    backup_path = client_home / "original-auth.json"
+    if bool(state.get("had_auth")):
+        if not backup_path.is_file():
+            raise RuntimeError("原 Codex 登录凭据备份不存在，无法恢复")
+        shutil.copyfile(backup_path, auth_path)
+        auth_path.chmod(0o600)
+    else:
+        auth_path.unlink(missing_ok=True)
+    for path in (
+        marker_path,
+        backup_path,
+        state_path,
+        client_home / "usage-baseline.json",
+    ):
+        path.unlink(missing_ok=True)
+    return True
 
 
 def local_ipv4() -> str | None:
@@ -161,8 +247,10 @@ def synchronize(config_path: Path = CONFIG_PATH, *, new_lease: bool = False, qui
     config = read_config(config_path)
     token = read_device_token(config_path.parent / "device-token")
     codex_home = expanded_path(str(config["codex_home"]))
-    private_directory(codex_home)
-    lease_path = codex_home / "cws-lease.json"
+    client_home = client_home_from_config(config)
+    initialize_auth_backup(codex_home, client_home)
+    initialize_usage_baseline(codex_home, client_home)
+    lease_path = client_home / "cws-lease.json"
 
     lease_id = None
     if not new_lease and lease_path.is_file():
@@ -190,8 +278,10 @@ def synchronize(config_path: Path = CONFIG_PATH, *, new_lease: bool = False, qui
         "account_alias": str(lease.get("account_alias") or ""),
         "access_token_expires_at": lease.get("access_token_expires_at"),
     }
-    write_json_atomic(codex_home / "auth.json", auth_payload)
+    auth_path = codex_home / "auth.json"
+    write_json_atomic(auth_path, auth_payload)
     write_json_atomic(lease_path, lease_payload)
+    mark_managed_auth(auth_path, client_home)
     if not quiet:
         print("CWS Codex 凭据同步成功。")
         print(f"账号：{lease.get('account_alias', '')}；套餐：{lease.get('plan_type', '')}")
@@ -205,11 +295,17 @@ def safe_token_count(value: Any) -> int:
         return 0
 
 
-def collect_session_usage(sessions_root: Path) -> list[dict[str, Any]]:
+def collect_session_usage(
+    sessions_root: Path,
+    excluded_session_ids: set[str] | None = None,
+) -> list[dict[str, Any]]:
     sessions: list[dict[str, Any]] = []
     if not sessions_root.is_dir():
         return sessions
     for path in sorted(sessions_root.rglob("*.jsonl")):
+        session_id = session_id_for_name(path.name)
+        if session_id in (excluded_session_ids or set()):
+            continue
         latest: dict[str, Any] | None = None
         try:
             with path.open("r", encoding="utf-8", errors="replace") as handle:
@@ -230,7 +326,7 @@ def collect_session_usage(sessions_root: Path) -> list[dict[str, Any]]:
         if latest is None:
             continue
         record: dict[str, Any] = {
-            "session_id": hashlib.sha256(path.name.encode("utf-8")).hexdigest()
+            "session_id": session_id
         }
         record.update({field: safe_token_count(latest.get(field)) for field in TOKEN_FIELDS})
         sessions.append(record)
@@ -240,7 +336,16 @@ def collect_session_usage(sessions_root: Path) -> list[dict[str, Any]]:
 def report_usage(config_path: Path = CONFIG_PATH, *, quiet: bool = False) -> int:
     config = read_config(config_path)
     codex_home = expanded_path(str(config["codex_home"]))
-    sessions = collect_session_usage(codex_home / "sessions")
+    client_home = client_home_from_config(config)
+    baseline_path = client_home / "usage-baseline.json"
+    excluded: set[str] = set()
+    if baseline_path.is_file():
+        try:
+            baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+            excluded = {str(value) for value in baseline.get("excluded_session_ids", [])}
+        except (json.JSONDecodeError, AttributeError) as exc:
+            raise RuntimeError(f"CWS Codex usage baseline is invalid: {baseline_path}") from exc
+    sessions = collect_session_usage(codex_home / "sessions", excluded)
     if not sessions:
         if not quiet:
             print("没有可上报的 Codex Token 累计记录。")
@@ -337,7 +442,14 @@ def configure_proxy(config_path: Path, proxy: str | None, direct: bool) -> int:
     return 0
 
 
-def setup(config_path: Path, broker_url: str, proxy_url: str, codex_home: str, vscode_path: str) -> int:
+def setup(
+    config_path: Path,
+    broker_url: str,
+    proxy_url: str,
+    codex_home: str,
+    client_home: str,
+    vscode_path: str,
+) -> int:
     private_directory(config_path.parent)
     token_path = config_path.parent / "device-token"
     keep_existing = False
@@ -356,10 +468,12 @@ def setup(config_path: Path, broker_url: str, proxy_url: str, codex_home: str, v
         "broker_url": broker_url.rstrip("/"),
         "proxy_url": proxy_url,
         "codex_home": str(expanded_path(codex_home)),
+        "client_home": str(expanded_path(client_home)),
         "vscode_path": vscode_path,
     }
     write_json_atomic(config_path, config)
-    private_directory(expanded_path(codex_home))
+    initialize_auth_backup(expanded_path(codex_home), expanded_path(client_home))
+    initialize_usage_baseline(expanded_path(codex_home), expanded_path(client_home))
     return 0
 
 
@@ -373,6 +487,7 @@ def diagnose(config_path: Path) -> int:
         print(f"Broker：{config.get('broker_url', '')}")
         print(f"代理：{config.get('proxy_url') or '直连'}")
         print(f"CODEX_HOME：{config.get('codex_home', '')}")
+        print(f"CWS 数据目录：{client_home_from_config(config)}")
     except Exception as exc:
         print(f"[失败] 配置文件：{exc}")
         return 1
@@ -422,7 +537,7 @@ def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--version", action="version", version=VERSION)
     subparsers = result.add_subparsers(dest="command", required=True)
-    for name in ("sync", "report", "launch", "diagnose", "background"):
+    for name in ("sync", "report", "launch", "diagnose", "background", "restore-auth"):
         command = subparsers.add_parser(name)
         command.add_argument("--config", type=Path, default=CONFIG_PATH)
         if name == "sync":
@@ -437,6 +552,7 @@ def parser() -> argparse.ArgumentParser:
     setup_parser.add_argument("--broker-url", required=True)
     setup_parser.add_argument("--proxy-url", default="")
     setup_parser.add_argument("--codex-home", required=True)
+    setup_parser.add_argument("--client-home", required=True)
     setup_parser.add_argument("--vscode-path", required=True)
     return result
 
@@ -456,6 +572,10 @@ def main(argv: list[str] | None = None) -> int:
             return diagnose(args.config)
         if args.command == "background":
             return background(args.config)
+        if args.command == "restore-auth":
+            if restore_original_auth(args.config):
+                print("已恢复安装前的 Codex 登录凭据。")
+            return 0
         if args.command == "configure-proxy":
             return configure_proxy(args.config, args.proxy, args.direct)
         if args.command == "setup":
@@ -464,6 +584,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.broker_url,
                 args.proxy_url,
                 args.codex_home,
+                args.client_home,
                 args.vscode_path,
             )
     except (RuntimeError, OSError, KeyError) as exc:

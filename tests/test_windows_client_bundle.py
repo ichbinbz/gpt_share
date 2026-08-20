@@ -91,8 +91,16 @@ def test_employee_defaults_and_proxy_override_are_present():
     assert "http://127.0.0.1:1082" in configure
 
 
-def test_launcher_reuses_default_vscode_profile_with_managed_codex_home():
+def test_launcher_reuses_default_vscode_profile_and_default_codex_history():
+    installer = read("Install-CwsCodex.ps1")
     launcher = read("Launch-CwsCodex.ps1")
+    sync = read("Sync-CwsCodex.ps1")
+    assert '[string] $CodexHome = (Join-Path $env:USERPROFILE ".codex")' in installer
+    assert '[string] $ClientHome = (Join-Path $env:USERPROFILE ".cws-codex")' in installer
+    assert "client_home = $ClientHome" in installer
+    assert "Initialize-CwsAuthBackup" in sync
+    assert "$LeasePath = Join-Path $ClientHome" in sync
+    assert "$AuthPath = Join-Path $CodexHome" in sync
     assert "$env:CODEX_HOME = $CodexHome" in launcher
     assert launcher.index("$env:CODEX_HOME = $CodexHome") < launcher.index("Start-Process -FilePath $VsCodePath")
     assert "--user-data-dir" not in launcher
@@ -101,6 +109,19 @@ def test_launcher_reuses_default_vscode_profile_with_managed_codex_home():
     assert "Start-Process -FilePath $VsCodePath -ArgumentList" not in launcher
     assert "Start-Process -FilePath $VsCodePath" in launcher
     assert 'Get-Process -Name "Code"' in launcher
+
+
+def test_original_auth_is_hash_guarded_and_usage_excludes_existing_sessions():
+    common = read("Common-CwsCodex.ps1")
+    reporter = read("Report-CwsCodexUsage.ps1")
+    uninstaller = read("Uninstall-CwsCodex.ps1")
+    assert "original-auth-state.json" in common
+    assert "original-auth.json" in common
+    assert "managed-auth.sha256" in common
+    assert "当前 Codex 登录凭据已被其他程序修改" in common
+    assert "usage-baseline.json" in common
+    assert "$ExcludedSessionIds.Contains($SessionId)" in reporter
+    assert "Restore-CwsOriginalAuth" in uninstaller
 
 
 def test_launcher_opens_vscode_even_when_credential_sync_fails_and_logs_reason():

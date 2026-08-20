@@ -2,7 +2,8 @@
     [string] $BrokerUrl = "http://codex.cws.internal:8765",
     [string] $ProxyUrl = "http://192.168.2.38:7897",
     [string] $InstallDir = (Join-Path $env:LOCALAPPDATA "CWS Codex"),
-    [string] $CodexHome = (Join-Path $env:USERPROFILE ".cws-codex"),
+    [string] $CodexHome = (Join-Path $env:USERPROFILE ".codex"),
+    [string] $ClientHome = (Join-Path $env:USERPROFILE ".cws-codex"),
     [switch] $SkipExtensionInstall,
     [switch] $SkipInitialSync,
     [switch] $SkipBackgroundStart,
@@ -34,7 +35,10 @@ trap {
 }
 
 Write-Host "正在安装 CWS Codex 员工端..." -ForegroundColor Cyan
-Set-CwsPrivateDirectoryAcl -Path $CodexHome
+Set-CwsPrivateDirectoryAcl -Path $ClientHome
+if (-not (Test-Path -LiteralPath $CodexHome)) {
+    New-Item -ItemType Directory -Path $CodexHome -Force | Out-Null
+}
 
 $PayloadFiles = @(
     "Common-CwsCodex.ps1",
@@ -112,6 +116,7 @@ $Config = [ordered] @{
     broker_url = $BrokerUrl
     proxy_url  = $ProxyUrl
     codex_home = $CodexHome
+    client_home = $ClientHome
     vscode_path = $VsCodePath
 }
 $ConfigPath = Join-Path $InstallDir "config.json"

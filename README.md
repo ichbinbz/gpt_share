@@ -17,7 +17,7 @@
 
 ## 当前版本
 
-- Windows / Ubuntu 员工端：`v0.1.2`
+- Windows / Ubuntu 员工端：`v0.1.3`
 - Codex Broker 服务端：`v0.1.3`
 
 ## 主要功能
@@ -35,10 +35,10 @@
 
 | 文件 | 用途 |
 | --- | --- |
-| `CWS-Codex-Release-v0.1.2.zip` | Windows 推荐分发包，包含图形安装器和简明使用说明 |
-| `CWS-Codex-Setup-v0.1.2.exe` | Windows 员工端安装器 |
-| `CWS-Codex-Windows-v0.1.2.zip` | Windows 脚本版及故障排查备用包 |
-| `CWS-Codex-Linux-v0.1.2.tar.gz` | Ubuntu/Linux 员工端 |
+| `CWS-Codex-Release-v0.1.3.zip` | Windows 推荐分发包，包含图形安装器和简明使用说明 |
+| `CWS-Codex-Setup-v0.1.3.exe` | Windows 员工端安装器 |
+| `CWS-Codex-Windows-v0.1.3.zip` | Windows 脚本版及故障排查备用包 |
+| `CWS-Codex-Linux-v0.1.3.tar.gz` | Ubuntu/Linux 员工端 |
 | `CWS-Codex-Server-v0.1.3.tar.gz` | Codex Broker 服务端部署包 |
 
 Windows 员工通常只需解压 Release 包、双击安装器并填写管理员分配的设备令牌。Linux 员工端解压后以普通用户运行 `./install.sh`。

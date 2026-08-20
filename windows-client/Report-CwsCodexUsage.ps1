@@ -6,19 +6,6 @@
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Common-CwsCodex.ps1")
 
-function Get-CwsSessionId {
-    param([Parameter(Mandatory = $true)] [string] $Name)
-
-    $Hasher = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        $Bytes = [System.Text.Encoding]::UTF8.GetBytes($Name)
-        return ([System.BitConverter]::ToString($Hasher.ComputeHash($Bytes))).Replace("-", "").ToLowerInvariant()
-    }
-    finally {
-        $Hasher.Dispose()
-    }
-}
-
 function Get-CwsTokenCount {
     param($Value)
 
@@ -35,6 +22,7 @@ function Get-CwsTokenCount {
 
 $Config = Get-CwsConfig -ConfigPath $ConfigPath
 $CodexHome = [Environment]::ExpandEnvironmentVariables([string] $Config.codex_home)
+$ClientHome = Get-CwsClientHome -Config $Config
 $SessionsRoot = Join-Path $CodexHome "sessions"
 if (-not (Test-Path -LiteralPath $SessionsRoot)) {
     if (-not $Quiet) {
@@ -43,8 +31,26 @@ if (-not (Test-Path -LiteralPath $SessionsRoot)) {
     return
 }
 
+$ExcludedSessionIds = New-Object 'System.Collections.Generic.HashSet[string]'
+$BaselinePath = Join-Path $ClientHome "usage-baseline.json"
+if (Test-Path -LiteralPath $BaselinePath) {
+    try {
+        $Baseline = Get-Content -LiteralPath $BaselinePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($SessionId in @($Baseline.excluded_session_ids)) {
+            [void] $ExcludedSessionIds.Add([string] $SessionId)
+        }
+    }
+    catch {
+        throw "CWS Codex usage baseline is invalid: $BaselinePath"
+    }
+}
+
 $Sessions = New-Object System.Collections.Generic.List[object]
 foreach ($File in Get-ChildItem -LiteralPath $SessionsRoot -Filter "*.jsonl" -Recurse -File -ErrorAction SilentlyContinue) {
+    $SessionId = Get-CwsSessionId -Name $File.Name
+    if ($ExcludedSessionIds.Contains($SessionId)) {
+        continue
+    }
     $Latest = $null
     try {
         foreach ($Line in [System.IO.File]::ReadLines($File.FullName)) {
@@ -69,7 +75,7 @@ foreach ($File in Get-ChildItem -LiteralPath $SessionsRoot -Filter "*.jsonl" -Re
         continue
     }
     $Sessions.Add([pscustomobject][ordered]@{
-        session_id                = Get-CwsSessionId -Name $File.Name
+        session_id                = $SessionId
         input_tokens              = (Get-CwsTokenCount $Latest.input_tokens)
         cached_input_tokens       = (Get-CwsTokenCount $Latest.cached_input_tokens)
         cache_write_input_tokens  = (Get-CwsTokenCount $Latest.cache_write_input_tokens)

@@ -16,6 +16,10 @@ if [[ -L "$BIN_PATH" && "$(readlink -f -- "$BIN_PATH")" == "$INSTALL_DIR/cws_cod
     rm -f -- "$BIN_PATH"
 fi
 
+if [[ -x "$INSTALL_DIR/cws_codex.py" && -f "$INSTALL_DIR/config.json" ]]; then
+    python3 "$INSTALL_DIR/cws_codex.py" restore-auth || echo "警告：安装前的 Codex 登录凭据未能自动恢复。" >&2
+fi
+
 answer="${1:-}"
 if [[ "$answer" != "--remove-credentials" ]]; then
     read -r -p "是否同时删除 ~/.cws-codex 中的短期凭据？[y/N]：" answer

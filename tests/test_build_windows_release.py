@@ -4,7 +4,7 @@ from scripts.build_windows_release import UTF8_BOM, build
 
 
 def test_windows_release_contains_installer_and_simple_guide(tmp_path):
-    installer = tmp_path / "CWS-Codex-Setup-v0.1.2.exe"
+    installer = tmp_path / "CWS-Codex-Setup-v0.1.3.exe"
     installer.write_bytes(b"mock installer")
     guide = tmp_path / "guide.txt"
     guide.write_text("安装后从桌面快捷方式启动。", encoding="utf-8")

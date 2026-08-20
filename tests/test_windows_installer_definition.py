@@ -16,9 +16,9 @@ def test_nsis_installer_is_per_user_and_runs_the_existing_configurator():
     assert "RequestExecutionLevel user" in definition
     assert 'InstallDir "$LOCALAPPDATA\\CWS Codex"' in definition
     assert "Install-CwsCodex.ps1" in definition
-    assert "CWS-Codex-Setup-v0.1.2.exe" in definition
-    assert 'VIProductVersion "0.1.2.0"' in definition
-    assert '"DisplayVersion" "0.1.2"' in definition
+    assert "CWS-Codex-Setup-v0.1.3.exe" in definition
+    assert 'VIProductVersion "0.1.3.0"' in definition
+    assert '"DisplayVersion" "0.1.3"' in definition
     assert "WriteUninstaller" in definition
     assert "CurrentVersion\\Uninstall\\CWS Codex" in definition
     assert "NSIS_WIN32_MAKENSIS" in definition

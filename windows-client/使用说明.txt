@@ -1,9 +1,9 @@
-CWS Codex Windows 员工端 v0.1.2
+CWS Codex Windows 员工端 v0.1.3
 ================================
 
 安装与使用：
 1. 完全退出所有正在运行的 VS Code 窗口。
-2. 双击 CWS-Codex-Setup-v0.1.2.exe。
+2. 双击 CWS-Codex-Setup-v0.1.3.exe。
 3. 按提示输入管理员分配给本机的设备令牌；代理地址请使用管理员提供的配置。
 4. 安装完成后，双击桌面的“公司 Codex（VS Code）”。
 

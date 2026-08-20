@@ -12,6 +12,7 @@ try {
     Write-Host "Broker：$($Config.broker_url)"
     Write-Host "代理：$($Config.proxy_url)"
     Write-Host "CODEX_HOME：$($Config.codex_home)"
+    Write-Host "CWS 数据目录：$(Get-CwsClientHome -Config $Config)"
 }
 catch {
     Write-Host "[失败] 配置文件：$($_.Exception.Message)" -ForegroundColor Red

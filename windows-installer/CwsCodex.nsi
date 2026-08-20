@@ -14,7 +14,7 @@
 Unicode true
 RequestExecutionLevel user
 Name "CWS Codex Windows 员工端"
-OutFile "${PROJECT_ROOT}${PROJECT_SEP}dist${PROJECT_SEP}CWS-Codex-Setup-v0.1.2.exe"
+OutFile "${PROJECT_ROOT}${PROJECT_SEP}dist${PROJECT_SEP}CWS-Codex-Setup-v0.1.3.exe"
 InstallDir "$LOCALAPPDATA\CWS Codex"
 InstallDirRegKey HKCU "Software\CWS Codex" "InstallDir"
 Icon "${PROJECT_ROOT}${PROJECT_SEP}windows-client${PROJECT_SEP}CwsCodex.ico"
@@ -23,13 +23,13 @@ BrandingText "CWS Codex"
 ShowInstDetails show
 ShowUninstDetails show
 
-VIProductVersion "0.1.2.0"
+VIProductVersion "0.1.3.0"
 VIAddVersionKey /LANG=2052 "ProductName" "CWS Codex Windows 员工端"
 VIAddVersionKey /LANG=2052 "CompanyName" "CWS"
 VIAddVersionKey /LANG=2052 "LegalCopyright" "Copyright CWS"
 VIAddVersionKey /LANG=2052 "FileDescription" "公司 Codex VS Code 员工端安装程序"
-VIAddVersionKey /LANG=2052 "FileVersion" "0.1.2"
-VIAddVersionKey /LANG=2052 "ProductVersion" "0.1.2"
+VIAddVersionKey /LANG=2052 "FileVersion" "0.1.3"
+VIAddVersionKey /LANG=2052 "ProductVersion" "0.1.3"
 
 !define MUI_ABORTWARNING
 !define MUI_ICON "${PROJECT_ROOT}${PROJECT_SEP}windows-client${PROJECT_SEP}CwsCodex.ico"
@@ -61,7 +61,7 @@ Section "安装 CWS Codex" MainSection
   WriteUninstaller "$INSTDIR\卸载公司Codex.exe"
   WriteRegStr HKCU "Software\CWS Codex" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\CWS Codex" "DisplayName" "CWS Codex Windows 员工端"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\CWS Codex" "DisplayVersion" "0.1.2"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\CWS Codex" "DisplayVersion" "0.1.3"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\CWS Codex" "Publisher" "CWS"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\CWS Codex" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\CWS Codex" "DisplayIcon" "$INSTDIR\CwsCodex.ico"

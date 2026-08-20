@@ -118,6 +118,136 @@ function Get-CwsDeviceToken {
     }
 }
 
+function Get-CwsClientHome {
+    param([Parameter(Mandatory = $true)] $Config)
+
+    $Configured = [string] $Config.client_home
+    if (-not $Configured) {
+        $Configured = Join-Path $env:USERPROFILE ".cws-codex"
+    }
+    return [Environment]::ExpandEnvironmentVariables($Configured)
+}
+
+function Get-CwsFileSha256 {
+    param([Parameter(Mandatory = $true)] [string] $Path)
+
+    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Get-CwsSessionId {
+    param([Parameter(Mandatory = $true)] [string] $Name)
+
+    $Hasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $Bytes = [System.Text.Encoding]::UTF8.GetBytes($Name)
+        return ([System.BitConverter]::ToString($Hasher.ComputeHash($Bytes))).Replace("-", "").ToLowerInvariant()
+    }
+    finally {
+        $Hasher.Dispose()
+    }
+}
+
+function Initialize-CwsAuthBackup {
+    param(
+        [Parameter(Mandatory = $true)] [string] $CodexHome,
+        [Parameter(Mandatory = $true)] [string] $ClientHome
+    )
+
+    Set-CwsPrivateDirectoryAcl -Path $ClientHome
+    if (-not (Test-Path -LiteralPath $CodexHome)) {
+        New-Item -ItemType Directory -Path $CodexHome -Force | Out-Null
+    }
+    $StatePath = Join-Path $ClientHome "original-auth-state.json"
+    if (Test-Path -LiteralPath $StatePath) {
+        return
+    }
+    $AuthPath = Join-Path $CodexHome "auth.json"
+    $BackupPath = Join-Path $ClientHome "original-auth.json"
+    $HadAuth = Test-Path -LiteralPath $AuthPath
+    if ($HadAuth) {
+        Copy-Item -LiteralPath $AuthPath -Destination $BackupPath -Force
+    }
+    Write-CwsJsonAtomic -Path $StatePath -Value ([ordered] @{
+        version  = 1
+        had_auth = [bool] $HadAuth
+    })
+    Set-CwsPrivateDirectoryAcl -Path $ClientHome
+}
+
+function Initialize-CwsUsageBaseline {
+    param(
+        [Parameter(Mandatory = $true)] [string] $CodexHome,
+        [Parameter(Mandatory = $true)] [string] $ClientHome
+    )
+
+    $BaselinePath = Join-Path $ClientHome "usage-baseline.json"
+    if (Test-Path -LiteralPath $BaselinePath) {
+        return
+    }
+    $Excluded = @()
+    $SessionsRoot = Join-Path $CodexHome "sessions"
+    if (Test-Path -LiteralPath $SessionsRoot) {
+        $Excluded = @(
+            Get-ChildItem -LiteralPath $SessionsRoot -Filter "*.jsonl" -Recurse -File -ErrorAction SilentlyContinue |
+                ForEach-Object { Get-CwsSessionId -Name $_.Name } |
+                Sort-Object -Unique
+        )
+    }
+    Write-CwsJsonAtomic -Path $BaselinePath -Value ([ordered] @{
+        version              = 1
+        excluded_session_ids = $Excluded
+    })
+    Set-CwsPrivateDirectoryAcl -Path $ClientHome
+}
+
+function Set-CwsManagedAuthMarker {
+    param(
+        [Parameter(Mandatory = $true)] [string] $AuthPath,
+        [Parameter(Mandatory = $true)] [string] $ClientHome
+    )
+
+    [System.IO.File]::WriteAllText(
+        (Join-Path $ClientHome "managed-auth.sha256"),
+        (Get-CwsFileSha256 -Path $AuthPath) + [Environment]::NewLine,
+        (New-Object System.Text.UTF8Encoding($false))
+    )
+}
+
+function Restore-CwsOriginalAuth {
+    param(
+        [Parameter(Mandatory = $true)] [string] $CodexHome,
+        [Parameter(Mandatory = $true)] [string] $ClientHome
+    )
+
+    $StatePath = Join-Path $ClientHome "original-auth-state.json"
+    if (-not (Test-Path -LiteralPath $StatePath)) {
+        return $false
+    }
+    $AuthPath = Join-Path $CodexHome "auth.json"
+    $MarkerPath = Join-Path $ClientHome "managed-auth.sha256"
+    if ((Test-Path -LiteralPath $AuthPath) -and (Test-Path -LiteralPath $MarkerPath)) {
+        $Expected = (Get-Content -LiteralPath $MarkerPath -Raw -Encoding UTF8).Trim()
+        if ($Expected -and (Get-CwsFileSha256 -Path $AuthPath) -ne $Expected) {
+            Write-Warning "当前 Codex 登录凭据已被其他程序修改，为避免覆盖，未恢复安装前凭据。"
+            return $false
+        }
+    }
+    $State = Get-Content -LiteralPath $StatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $BackupPath = Join-Path $ClientHome "original-auth.json"
+    if ([bool] $State.had_auth) {
+        if (-not (Test-Path -LiteralPath $BackupPath)) {
+            throw "原 Codex 登录凭据备份不存在，无法恢复。"
+        }
+        Copy-Item -LiteralPath $BackupPath -Destination $AuthPath -Force
+    }
+    else {
+        Remove-Item -LiteralPath $AuthPath -Force -ErrorAction SilentlyContinue
+    }
+    @($MarkerPath, $BackupPath, $StatePath, (Join-Path $ClientHome "usage-baseline.json")) |
+        ForEach-Object { Remove-Item -LiteralPath $_ -Force -ErrorAction SilentlyContinue }
+    return $true
+}
+
 function Find-CwsVsCode {
     $Candidates = @(
         (Join-Path $env:LOCALAPPDATA "Programs\Microsoft VS Code\Code.exe"),

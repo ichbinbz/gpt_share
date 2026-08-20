@@ -1,4 +1,4 @@
-CWS Codex Ubuntu/Linux 员工端 v0.1.2
+CWS Codex Ubuntu/Linux 员工端 v0.1.3
 =====================================
 
 系统要求：
@@ -7,7 +7,7 @@ CWS Codex Ubuntu/Linux 员工端 v0.1.2
 - systemd 用户服务（建议，用于每 5 分钟自动同步）
 
 安装：
-1. 解压 CWS-Codex-Linux-v0.1.2.tar.gz。
+1. 解压 CWS-Codex-Linux-v0.1.3.tar.gz。
 2. 打开终端进入解压后的目录，不要使用 sudo。
 3. 执行：
 
@@ -29,8 +29,10 @@ CWS Codex Ubuntu/Linux 员工端 v0.1.2
 - 卸载：~/.local/share/cws-codex/uninstall.sh
 
 行为说明：
-- 启动 VS Code 时不传额外窗口或用户目录参数，复用用户原有设置、扩展和历史目录。
-- 仅通过 CODEX_HOME=~/.cws-codex 切换公司 Codex 登录凭据。
+- 启动 VS Code 时不传额外窗口或用户目录参数，复用用户原有设置、扩展、历史目录和 Codex 历史对话。
+- 默认使用 ~/.codex 保存会话，仅替换其中的 auth.json；原登录凭据安全备份在 ~/.cws-codex，卸载时会自动恢复。
+- 安装前已有的历史会话不会计入公司 Token 用量上报，也不会上传对话内容。
+- CODEX_HOME 保持为默认 ~/.codex，仅由客户端同步公司 auth.json 登录凭据。
 - 设备令牌保存在 ~/.local/share/cws-codex/device-token，目录权限 700、文件权限 600。
 - systemd 用户定时器每 5 分钟同步凭据和上报散列后的会话 Token 累计值。
 - 不上传对话、提示词、代码或文件内容。

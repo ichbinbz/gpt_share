@@ -90,9 +90,9 @@ $env:CWS_CODEX_DEVICE_TOKEN='该设备的随机令牌'
 .\scripts\start_vscode_cws_codex_windows.ps1
 ```
 
-Windows 员工日常使用建议分发 `dist/CWS-Codex-Release-v0.1.2.zip`，其中包含标准图形安装器
-`CWS-Codex-Setup-v0.1.2.exe` 和简明的 `使用说明.txt`。员工解压后双击安装器即可安装，并可在
-Windows“已安装的应用”中卸载。`dist/CWS-Codex-Windows-v0.1.2.zip`
+Windows 员工日常使用建议分发 `dist/CWS-Codex-Release-v0.1.3.zip`，其中包含标准图形安装器
+`CWS-Codex-Setup-v0.1.3.exe` 和简明的 `使用说明.txt`。员工解压后双击安装器即可安装，并可在
+Windows“已安装的应用”中卸载。`dist/CWS-Codex-Windows-v0.1.3.zip`
 保留用于管理员排障。员工输入管理员
 为本机签发的令牌后，安装器会使用 Windows DPAPI 保存令牌、安装/检查
 官方 `openai.chatgpt` 扩展、创建独立 `%USERPROFILE%\.cws-codex`，并在桌面生成 `公司 Codex（VS Code）`
@@ -100,10 +100,10 @@ Windows“已安装的应用”中卸载。`dist/CWS-Codex-Windows-v0.1.2.zip`
 VS Code 是否打开，每 5 分钟同步短期凭据并上报 Token 累计值。后台使用互斥锁避免重复运行，电脑
 休眠或断网恢复后会从本地累计记录补报。
 
-Ubuntu/Linux 员工端发布包为 `dist/CWS-Codex-Linux-v0.1.2.tar.gz`。员工解压后以普通用户运行
+Ubuntu/Linux 员工端发布包为 `dist/CWS-Codex-Linux-v0.1.3.tar.gz`。员工解压后以普通用户运行
 `./install.sh`，不要使用 sudo。安装器会把客户端放到 `~/.local/share/cws-codex`，创建应用菜单和
 可选桌面入口，并启用 systemd 用户级定时器。设备令牌存放在权限为 `600` 的用户私有文件中；
-启动 VS Code 时复用用户原有配置和历史目录，仅通过 `CODEX_HOME=~/.cws-codex` 切换公司凭据。
+启动 VS Code 时复用用户原有配置、默认 `~/.codex` 和历史对话，仅替换其中的 `auth.json`。客户端状态、原凭据备份和租约保存在 `~/.cws-codex`；卸载时会在安全校验后恢复原凭据。安装前已有会话不会计入公司 Token 用量上报。
 
 员工统计以服务器签发的设备令牌 ID 和标签为唯一身份，不信任客户端自行填写的电脑名。同一个
 员工令牌若错误地安装到多台电脑，用量会合并到该令牌名下。员工端只上传散列后的会话 ID，以及
