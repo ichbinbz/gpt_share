@@ -8,7 +8,7 @@ CWS Codex Windows 员工端
 - 管理员从服务器签发、专门分配给本机的 CWS 设备令牌
 
 安装：
-1. 推荐直接双击 Release 中的图形安装程序“CWS-Codex-Setup-v0.1.1.exe”，不需要手工解压。
+1. 推荐直接双击 Release 中的图形安装程序“CWS-Codex-Setup-v0.1.2.exe”，不需要手工解压。
 2. 使用管理员排障 ZIP 时，应先解压整个 ZIP，再双击“安装.cmd”或“Install.cmd”。不需要管理员权限。
 3. 首次输入管理员从服务器签发的本机专用设备令牌。
 4. 安装完成后，双击桌面的“公司 Codex（VS Code）”。
@@ -20,8 +20,8 @@ CWS Codex Windows 员工端
 - 双击安装目录中的 Configure-Proxy.cmd 可随时修改。
 
 注意：
-- “公司 Codex（VS Code）”会启动 VS Code，并使用独立用户目录，可以与普通 VS Code 同时运行。
-- 设备令牌通过 Windows DPAPI 加密，仅当前 Windows 用户可以解密。
+- “公司 Codex（VS Code）”复用本机默认 VS Code 用户配置（主题、扩展、设置、最近目录和窗口恢复行为），不添加额外 VS Code 启动参数，仅通过 CODEX_HOME 切换公司 Codex 登录凭据。首次切换前请关闭所有已运行的 VS Code 窗口。
+- 设备令牌优先使用 Windows 用户级 DPAPI 加密；受控进程无法使用用户级 DPAPI 时，使用机器级 DPAPI，并由仅当前用户可访问的目录 ACL 继续保护。
 - ChatGPT 短期访问令牌存放在 %USERPROFILE%\.cws-codex，并限制当前用户访问。
 - Codex 继续使用官方 OpenAI Provider；本工具不配置自定义 Provider。
 - 同一枚设备令牌不要分发给多台电脑；换机、遗失或离职时由管理员在服务器吊销。

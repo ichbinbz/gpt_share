@@ -8,10 +8,12 @@ from scripts.codex_plus_broker import (
     DeviceUsageStore,
     SessionTokenUsage,
     TokenBroker,
+    account_selection_key,
     normalize_ip,
     token_account_id,
     token_expiry,
     token_plan_type,
+    token_email,
     usage_score,
 )
 from scripts.codex_plus_sync import DEFAULT_BROKER_URL, DEFAULT_PROXY_URL, codex_auth_payload
@@ -38,6 +40,12 @@ def test_decodes_official_chatgpt_claims():
     assert token_plan_type(token) == "plus"
 
 
+def test_reads_real_account_email_from_server_owned_token_claims():
+    id_token = jwt({"email": "employee@example.com"})
+    assert token_email(id_token, None) == "employee@example.com"
+    assert token_email("invalid", jwt({"preferred_username": "fallback@example.com"})) == "fallback@example.com"
+
+
 def test_client_auth_uses_official_external_chatgpt_mode_without_refresh_token():
     token = jwt({"exp": 2_000_000_000})
     payload = codex_auth_payload(token, "acct-test")
@@ -51,6 +59,50 @@ def test_client_auth_uses_official_external_chatgpt_mode_without_refresh_token()
 def test_usage_score_uses_most_constrained_window():
     assert usage_score({"rate_limit": {"primary_window": {"used_percent": 20}, "secondary_window": {"used_percent": 75}}}) == 75
     assert usage_score(None) == 50
+
+
+def test_account_selection_prefers_large_allowance_that_resets_sooner():
+    fast_reset = {
+        "rate_limit": {
+            "primary_window": {"used_percent": 20, "reset_after_seconds": 3600},
+            "secondary_window": {"used_percent": 10, "reset_after_seconds": 604800},
+        }
+    }
+    slow_reset = {
+        "rate_limit": {
+            "primary_window": {"used_percent": 10, "reset_after_seconds": 36000},
+            "secondary_window": {"used_percent": 10, "reset_after_seconds": 604800},
+        }
+    }
+    assert account_selection_key(fast_reset, 0, now=1_000_000) < account_selection_key(
+        slow_reset, 0, now=1_000_000
+    )
+
+
+def test_account_selection_avoids_nearly_depleted_account_even_if_reset_is_close():
+    nearly_empty = {
+        "rate_limit": {
+            "primary_window": {"used_percent": 95, "reset_after_seconds": 60},
+            "secondary_window": {"used_percent": 95, "reset_after_seconds": 60},
+        }
+    }
+    healthy = {
+        "rate_limit": {
+            "primary_window": {"used_percent": 50, "reset_after_seconds": 86400},
+            "secondary_window": {"used_percent": 50, "reset_after_seconds": 86400},
+        }
+    }
+    assert account_selection_key(healthy, 0) < account_selection_key(nearly_empty, 0)
+
+
+def test_account_selection_penalizes_active_leases_for_equal_allowance():
+    usage = {
+        "rate_limit": {
+            "primary_window": {"used_percent": 25, "reset_after_seconds": 7200},
+            "secondary_window": {"used_percent": 20, "reset_after_seconds": 604800},
+        }
+    }
+    assert account_selection_key(usage, 0) < account_selection_key(usage, 2)
 
 
 def test_sync_source_never_mentions_server_refresh_field_in_output(tmp_path: Path):
@@ -107,6 +159,7 @@ def test_quota_dashboard_keeps_admin_token_in_tab_session_only():
     assert "sessionStorage" in dashboard
     assert "localStorage" not in dashboard
     assert "access_token" not in dashboard
+    assert "account.email" in dashboard
 
 
 def test_empty_account_status_can_count_active_leases():

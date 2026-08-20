@@ -1,4 +1,4 @@
-param([string] $ConfigPath = (Join-Path $PSScriptRoot "config.json"))
+﻿param([string] $ConfigPath = (Join-Path $PSScriptRoot "config.json"))
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Common-CwsCodex.ps1")
@@ -31,20 +31,18 @@ catch {
 
 $CodexHome = [Environment]::ExpandEnvironmentVariables([string] $Config.codex_home)
 $env:CODEX_HOME = $CodexHome
-$VsCodeUserData = Join-Path $CodexHome "vscode-user-data"
-if (-not (Test-Path -LiteralPath $VsCodeUserData)) {
-    New-Item -ItemType Directory -Path $VsCodeUserData -Force | Out-Null
+$RunningVsCode = Get-Process -Name "Code" -ErrorAction SilentlyContinue
+if ($RunningVsCode) {
+    Write-Warning "VS Code 已在运行。若这是首次切换公司 Codex 凭据，请先关闭所有 VS Code 窗口，再重新使用桌面快捷方式启动。"
 }
-$VsCodeArguments = @("--new-window", "--user-data-dir", $VsCodeUserData)
-$VsCodeArgumentLine = "--new-window --user-data-dir `"$VsCodeUserData`""
 if ([System.IO.Path]::GetExtension($VsCodePath) -ieq ".cmd") {
-    & $VsCodePath @VsCodeArguments
+    & $VsCodePath
     if ($LASTEXITCODE -ne 0) {
         throw "VS Code launcher returned exit code $LASTEXITCODE"
     }
 }
 else {
-    Start-Process -FilePath $VsCodePath -ArgumentList $VsCodeArgumentLine
+    Start-Process -FilePath $VsCodePath
 }
 Write-CwsLaunchLog ("VS Code launch requested: " + $VsCodePath)
 

@@ -1,4 +1,4 @@
-param([string] $InstallDir = (Join-Path $env:LOCALAPPDATA "CWS Codex"))
+﻿param([string] $InstallDir = (Join-Path $env:LOCALAPPDATA "CWS Codex"))
 
 $ErrorActionPreference = "Stop"
 

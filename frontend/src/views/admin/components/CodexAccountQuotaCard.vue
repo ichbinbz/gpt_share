@@ -31,7 +31,10 @@
         <n-card size="small" embedded>
           <template #header>
             <n-space align="center">
-              <strong>{{ account.alias }}</strong>
+              <div>
+                <strong>{{ account.email || account.alias }}</strong>
+                <div v-if="account.email" class="text-xs opacity-60">{{ account.alias }}</div>
+              </div>
               <n-tag size="small" :type="account.available ? 'success' : 'error'">
                 {{ account.available ? $t('codexQuota.ready') : $t('codexQuota.unavailable') }}
               </n-tag>

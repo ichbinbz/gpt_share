@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 UTF8_BOM = b"\xef\xbb\xbf"
+VERSION = "0.1.2"
 
 
 def payload_for_windows(path: Path) -> bytes:
@@ -32,7 +33,7 @@ def main() -> int:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("dist/CWS-Codex-Windows-v0.1.1.zip"),
+        default=Path(f"dist/CWS-Codex-Windows-v{VERSION}.zip"),
     )
     args = parser.parse_args()
     build(args.source, args.output)

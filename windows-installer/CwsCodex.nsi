@@ -1,33 +1,39 @@
-!include "MUI2.nsh"
+﻿!include "MUI2.nsh"
 !include "LogicLib.nsh"
 
 !ifndef PROJECT_ROOT
   !error "PROJECT_ROOT must point to the repository root"
 !endif
 
+!ifdef NSIS_WIN32_MAKENSIS
+  !define PROJECT_SEP "\"
+!else
+  !define PROJECT_SEP "/"
+!endif
+
 Unicode true
 RequestExecutionLevel user
 Name "CWS Codex Windows 员工端"
-OutFile "${PROJECT_ROOT}/dist/CWS-Codex-Setup-v0.1.1.exe"
+OutFile "${PROJECT_ROOT}${PROJECT_SEP}dist${PROJECT_SEP}CWS-Codex-Setup-v0.1.2.exe"
 InstallDir "$LOCALAPPDATA\CWS Codex"
 InstallDirRegKey HKCU "Software\CWS Codex" "InstallDir"
-Icon "${PROJECT_ROOT}/windows-client/CwsCodex.ico"
-UninstallIcon "${PROJECT_ROOT}/windows-client/CwsCodex.ico"
+Icon "${PROJECT_ROOT}${PROJECT_SEP}windows-client${PROJECT_SEP}CwsCodex.ico"
+UninstallIcon "${PROJECT_ROOT}${PROJECT_SEP}windows-client${PROJECT_SEP}CwsCodex.ico"
 BrandingText "CWS Codex"
 ShowInstDetails show
 ShowUninstDetails show
 
-VIProductVersion "0.1.1.0"
+VIProductVersion "0.1.2.0"
 VIAddVersionKey /LANG=2052 "ProductName" "CWS Codex Windows 员工端"
 VIAddVersionKey /LANG=2052 "CompanyName" "CWS"
 VIAddVersionKey /LANG=2052 "LegalCopyright" "Copyright CWS"
 VIAddVersionKey /LANG=2052 "FileDescription" "公司 Codex VS Code 员工端安装程序"
-VIAddVersionKey /LANG=2052 "FileVersion" "0.1.1"
-VIAddVersionKey /LANG=2052 "ProductVersion" "0.1.1"
+VIAddVersionKey /LANG=2052 "FileVersion" "0.1.2"
+VIAddVersionKey /LANG=2052 "ProductVersion" "0.1.2"
 
 !define MUI_ABORTWARNING
-!define MUI_ICON "${PROJECT_ROOT}/windows-client/CwsCodex.ico"
-!define MUI_UNICON "${PROJECT_ROOT}/windows-client/CwsCodex.ico"
+!define MUI_ICON "${PROJECT_ROOT}${PROJECT_SEP}windows-client${PROJECT_SEP}CwsCodex.ico"
+!define MUI_UNICON "${PROJECT_ROOT}${PROJECT_SEP}windows-client${PROJECT_SEP}CwsCodex.ico"
 !define MUI_FINISHPAGE_NOAUTOCLOSE
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
@@ -43,11 +49,11 @@ Section "安装 CWS Codex" MainSection
   SectionIn RO
   InitPluginsDir
   SetOutPath "$PLUGINSDIR\windows-client"
-  File /r "${PROJECT_ROOT}/windows-client/*.*"
+  File /r "${PROJECT_ROOT}${PROJECT_SEP}windows-client${PROJECT_SEP}*.*"
 
   ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-client\Install-CwsCodex.ps1" -InstallDir "$INSTDIR"' $InstallResult
   ${If} $InstallResult != 0
-    MessageBox MB_ICONSTOP|MB_OK "员工端配置失败，错误码：$InstallResult。安装目录未注册，请检查 VS Code、网络和诊断日志后重试。"
+    MessageBox MB_ICONSTOP|MB_OK "员工端配置失败，错误码：$InstallResult。详细原因已写入 $TEMP\CWS-Codex-Install.log。"
     Abort
   ${EndIf}
 
@@ -55,7 +61,7 @@ Section "安装 CWS Codex" MainSection
   WriteUninstaller "$INSTDIR\卸载公司Codex.exe"
   WriteRegStr HKCU "Software\CWS Codex" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\CWS Codex" "DisplayName" "CWS Codex Windows 员工端"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\CWS Codex" "DisplayVersion" "0.1.1"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\CWS Codex" "DisplayVersion" "0.1.2"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\CWS Codex" "Publisher" "CWS"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\CWS Codex" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\CWS Codex" "DisplayIcon" "$INSTDIR\CwsCodex.ico"

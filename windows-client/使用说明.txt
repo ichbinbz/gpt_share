@@ -1,0 +1,23 @@
+CWS Codex Windows 员工端 v0.1.2
+================================
+
+安装与使用：
+1. 完全退出所有正在运行的 VS Code 窗口。
+2. 双击 CWS-Codex-Setup-v0.1.2.exe。
+3. 按提示输入管理员分配给本机的设备令牌；代理地址请使用管理员提供的配置。
+4. 安装完成后，双击桌面的“公司 Codex（VS Code）”。
+
+使用效果：
+- 保留用户原有的 VS Code 设置、主题、扩展、最近目录和窗口恢复行为。
+- 只切换 Codex 登录凭据，不修改普通 VS Code 用户配置。
+
+常见问题：
+- 首次启动前必须完全退出 VS Code，否则已运行的进程可能继续使用旧凭据。
+- 无法连接时，运行 %LOCALAPPDATA%\CWS Codex\诊断.cmd。
+- 安装失败时，查看 %TEMP%\CWS-Codex-Install.log。
+- 如需更换代理，运行 %LOCALAPPDATA%\CWS Codex\Configure-Proxy.cmd。
+
+卸载：
+- 在 Windows“设置 → 应用 → 已安装的应用”中卸载 CWS Codex。
+
+设备令牌仅供本机使用，请勿转发给其他人或复制到其他电脑。

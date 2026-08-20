@@ -1,4 +1,6 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
+
+Add-Type -AssemblyName System.Security
 
 function Write-CwsJsonAtomic {
     param(
@@ -17,6 +19,44 @@ function Write-CwsJsonAtomic {
     Move-Item -LiteralPath $TempPath -Destination $Path -Force
 }
 
+function Protect-CwsDeviceToken {
+    param(
+        [Parameter(Mandatory = $true)] [Security.SecureString] $Token,
+        [Parameter(Mandatory = $true)] [string] $Path
+    )
+
+    $Pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Token)
+    $PlainBytes = $null
+    $Entropy = [Text.Encoding]::UTF8.GetBytes("CWS Codex device token v1")
+    try {
+        $PlainText = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($Pointer)
+        $PlainBytes = [Text.Encoding]::UTF8.GetBytes($PlainText)
+        $Scope = [System.Security.Cryptography.DataProtectionScope]::CurrentUser
+        $Scheme = "dpapi-current-user"
+        try {
+            $ProtectedBytes = [System.Security.Cryptography.ProtectedData]::Protect($PlainBytes, $Entropy, $Scope)
+        }
+        catch [System.Security.Cryptography.CryptographicException] {
+            $Scope = [System.Security.Cryptography.DataProtectionScope]::LocalMachine
+            $Scheme = "dpapi-local-machine"
+            $ProtectedBytes = [System.Security.Cryptography.ProtectedData]::Protect($PlainBytes, $Entropy, $Scope)
+        }
+        $Envelope = [ordered] @{
+            version    = 1
+            scheme     = $Scheme
+            ciphertext = [Convert]::ToBase64String($ProtectedBytes)
+        }
+        Write-CwsJsonAtomic -Path $Path -Value $Envelope
+        return $Scheme
+    }
+    finally {
+        if ($PlainBytes) {
+            [Array]::Clear($PlainBytes, 0, $PlainBytes.Length)
+        }
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($Pointer)
+    }
+}
+
 function Set-CwsPrivateDirectoryAcl {
     param([Parameter(Mandatory = $true)] [string] $Path)
 
@@ -24,7 +64,7 @@ function Set-CwsPrivateDirectoryAcl {
         New-Item -ItemType Directory -Path $Path -Force | Out-Null
     }
     $Sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    & icacls.exe $Path /inheritance:r /grant:r "*${Sid}:(OI)(CI)F" /T /C | Out-Null
+    & icacls.exe $Path /inheritance:e /grant:r "*${Sid}:(OI)(CI)F" /T /C | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to restrict permissions on $Path"
     }
@@ -45,7 +85,30 @@ function Get-CwsDeviceToken {
     if (-not (Test-Path -LiteralPath $TokenPath)) {
         throw "Encrypted device token does not exist. Run Install-CwsCodex.ps1 again."
     }
-    $SecureToken = Get-Content -LiteralPath $TokenPath -Raw -Encoding UTF8 | ConvertTo-SecureString
+    $Serialized = (Get-Content -LiteralPath $TokenPath -Raw -Encoding UTF8).Trim()
+    if ($Serialized.StartsWith("{")) {
+        $Envelope = $Serialized | ConvertFrom-Json
+        if ($Envelope.version -ne 1 -or -not $Envelope.ciphertext) {
+            throw "Encrypted device token envelope is invalid."
+        }
+        switch ([string] $Envelope.scheme) {
+            "dpapi-current-user" { $Scope = [System.Security.Cryptography.DataProtectionScope]::CurrentUser }
+            "dpapi-local-machine" { $Scope = [System.Security.Cryptography.DataProtectionScope]::LocalMachine }
+            default { throw "Encrypted device token scheme is not supported: $($Envelope.scheme)" }
+        }
+        $Entropy = [Text.Encoding]::UTF8.GetBytes("CWS Codex device token v1")
+        $ProtectedBytes = [Convert]::FromBase64String([string] $Envelope.ciphertext)
+        $PlainBytes = [System.Security.Cryptography.ProtectedData]::Unprotect($ProtectedBytes, $Entropy, $Scope)
+        try {
+            return [Text.Encoding]::UTF8.GetString($PlainBytes)
+        }
+        finally {
+            [Array]::Clear($PlainBytes, 0, $PlainBytes.Length)
+        }
+    }
+
+    # Backward compatibility with the original ConvertFrom-SecureString format.
+    $SecureToken = $Serialized | ConvertTo-SecureString
     $Pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureToken)
     try {
         return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($Pointer)

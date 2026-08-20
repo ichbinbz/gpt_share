@@ -1,4 +1,4 @@
-param([string] $ConfigPath = (Join-Path $PSScriptRoot "config.json"))
+﻿param([string] $ConfigPath = (Join-Path $PSScriptRoot "config.json"))
 
 $ErrorActionPreference = "Continue"
 . (Join-Path $PSScriptRoot "Common-CwsCodex.ps1")
@@ -35,7 +35,7 @@ else {
 try {
     $DeviceToken = Get-CwsDeviceToken -TokenPath (Join-Path $PSScriptRoot "device-token.dpapi")
     if ($DeviceToken -and $DeviceToken.StartsWith("cwsdt_") -and $DeviceToken.Length -ge 30) {
-        Write-Host "[正常] 设备令牌可以由当前 Windows 用户解密" -ForegroundColor Green
+        Write-Host "[正常] 设备令牌可以在本机安全解密" -ForegroundColor Green
     }
     else {
         Write-Host "[失败] 设备令牌格式不正确；安装时应输入 cwsdt_ 开头的密钥" -ForegroundColor Red

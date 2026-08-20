@@ -1,12 +1,22 @@
 import asyncio
+import importlib.util
+from pathlib import Path
 
-from api.sources.codex_broker_status import get_codex_broker_status, normalize_codex_account
+
+SOURCE = Path(__file__).resolve().parents[1] / "backend" / "api" / "sources" / "codex_broker_status.py"
+SPEC = importlib.util.spec_from_file_location("codex_broker_status", SOURCE)
+assert SPEC and SPEC.loader
+MODULE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(MODULE)
+get_codex_broker_status = MODULE.get_codex_broker_status
+normalize_codex_account = MODULE.normalize_codex_account
 
 
 def test_normalizes_codex_quota_without_exposing_raw_usage():
     account = normalize_codex_account(
         {
             "alias": "account-03",
+            "email": "employee@example.com",
             "available": True,
             "plan_type": "pro",
             "usage_score": 72,
@@ -30,6 +40,7 @@ def test_normalizes_codex_quota_without_exposing_raw_usage():
     )
 
     assert account["alias"] == "account-03"
+    assert account["email"] == "employee@example.com"
     assert account["active_leases"] == 2
     assert account["windows"][0]["remaining_percent"] == 28
     assert account["windows"][1]["remaining_percent"] == 75

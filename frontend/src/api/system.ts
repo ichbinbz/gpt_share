@@ -56,6 +56,7 @@ export type CodexQuotaWindow = {
 
 export type CodexAccountQuota = {
   alias: string;
+  email: string | null;
   available: boolean;
   plan_type: string | null;
   usage_score: number | null;

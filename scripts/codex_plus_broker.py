@@ -89,12 +89,36 @@ def token_account_id(token: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def token_email(*tokens: str | None) -> str | None:
+    """Read the login email from server-owned ID/access token claims for display."""
+    for token in tokens:
+        if not isinstance(token, str) or not token:
+            continue
+        try:
+            claims = decode_jwt_claims(token)
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        candidates = (
+            claims.get("email"),
+            claims.get("preferred_username"),
+            _nested(claims, "https://api.openai.com/profile").get("email"),
+        )
+        for candidate in candidates:
+            if isinstance(candidate, str) and "@" in candidate:
+                return candidate.strip()
+    return None
+
+
 def atomic_write_json(path: Path, payload: dict[str, Any], mode: int = 0o600) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
-        os.fchmod(fd, mode)
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, mode)
+        else:
+            os.chmod(temp_name, mode)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = -1
             json.dump(payload, handle, ensure_ascii=False, indent=2)
             handle.write("\n")
             handle.flush()
@@ -102,6 +126,8 @@ def atomic_write_json(path: Path, payload: dict[str, Any], mode: int = 0o600) ->
         os.replace(temp_name, path)
         os.chmod(path, mode)
     except BaseException:
+        if fd >= 0:
+            os.close(fd)
         try:
             os.unlink(temp_name)
         except FileNotFoundError:
@@ -431,6 +457,72 @@ def usage_score(usage: dict[str, Any] | None) -> float:
     return max(candidates) if candidates else 50.0
 
 
+def _usage_windows(usage: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(usage, dict):
+        return []
+    windows: list[dict[str, Any]] = []
+    sources = [usage]
+    rate_limit = usage.get("rate_limit")
+    if isinstance(rate_limit, dict):
+        sources.insert(0, rate_limit)
+    for source in sources:
+        for key in ("primary_window", "secondary_window"):
+            window = source.get(key)
+            if isinstance(window, dict):
+                windows.append(window)
+    return windows
+
+
+def _seconds_until_reset(window: dict[str, Any], now: float) -> float | None:
+    reset_after = window.get("reset_after_seconds")
+    if isinstance(reset_after, (int, float)):
+        return max(60.0, float(reset_after))
+    reset_at = window.get("reset_at")
+    if isinstance(reset_at, (int, float)):
+        return max(60.0, float(reset_at) - now)
+    window_seconds = window.get("limit_window_seconds", window.get("window_seconds"))
+    if isinstance(window_seconds, (int, float)) and window_seconds > 0:
+        return float(window_seconds)
+    return None
+
+
+def account_selection_key(
+    usage: dict[str, Any] | None,
+    active_leases: int,
+    *,
+    now: float | None = None,
+) -> tuple[int, float, int, float]:
+    """Prefer healthy allowance that has lots left and will reset soon.
+
+    The reset-seconds-per-remaining-percent ratio models allowance expiry:
+    lower values mean more unused allowance is about to disappear. Accounts
+    below 20% effective remaining capacity are kept behind healthy/unknown
+    accounts, while active leases add a modest anti-concentration penalty.
+    """
+    windows = _usage_windows(usage)
+    if not windows:
+        return (1, float("inf"), max(0, active_leases), -50.0)
+    current_time = time.time() if now is None else now
+    remaining_values: list[float] = []
+    expiry_ratios: list[float] = []
+    for window in windows:
+        used = _window_used_percent(window)
+        if used is None:
+            continue
+        remaining = max(0.0, 100.0 - min(100.0, max(0.0, used)))
+        remaining_values.append(remaining)
+        seconds = _seconds_until_reset(window, current_time)
+        if seconds is not None and remaining > 0:
+            expiry_ratios.append(seconds / remaining)
+    if not remaining_values:
+        return (1, float("inf"), max(0, active_leases), -50.0)
+    effective_remaining = min(remaining_values)
+    capacity_band = 0 if effective_remaining >= 20.0 else 2
+    expiry_ratio = min(expiry_ratios) if expiry_ratios else float("inf")
+    load_adjusted_ratio = expiry_ratio * (1.0 + max(0, active_leases) * 0.35)
+    return (capacity_band, load_adjusted_ratio, max(0, active_leases), -effective_remaining)
+
+
 class TokenBroker:
     def __init__(self, settings: BrokerSettings, client: httpx.AsyncClient | None = None):
         self.settings = settings
@@ -506,7 +598,12 @@ class TokenBroker:
                     raise HTTPException(status_code=503, detail="all Codex accounts are unavailable")
                 alias = min(
                     snapshots,
-                    key=lambda name: (usage_score(snapshots[name][1]) + active_counts[name] * 5.0, name),
+                    key=lambda name: (
+                        account_selection_key(
+                            snapshots[name][1], active_counts[name], now=now
+                        ),
+                        name,
+                    ),
                 )
 
             if alias not in snapshots:
@@ -559,10 +656,12 @@ class TokenBroker:
                 if refresh_usage:
                     account.usage_cache = (0.0, None)
                 auth, usage = await self._account_snapshot(account)
-                access_token = auth["tokens"]["access_token"]
+                tokens = auth["tokens"]
+                access_token = tokens["access_token"]
                 results.append(
                     {
                         "alias": alias,
+                        "email": token_email(tokens.get("id_token"), access_token),
                         "available": True,
                         "plan_type": token_plan_type(access_token),
                         "access_token_expires_at": token_expiry(access_token),
@@ -598,7 +697,7 @@ def request_source_ip(request: FastAPIRequest) -> str | None:
 settings = BrokerSettings.from_env()
 broker = TokenBroker(settings)
 usage_store = DeviceUsageStore(settings.usage_state_file)
-app = FastAPI(title="CWS Codex Plus Broker", version="0.1.0")
+app = FastAPI(title="CWS Codex Plus Broker", version="0.1.3")
 
 
 def _legacy_device_identity(supplied: str) -> DeviceIdentity:

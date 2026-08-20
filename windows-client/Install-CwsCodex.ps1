@@ -1,16 +1,39 @@
-param(
+﻿param(
     [string] $BrokerUrl = "http://codex.cws.internal:8765",
     [string] $ProxyUrl = "http://192.168.2.38:7897",
     [string] $InstallDir = (Join-Path $env:LOCALAPPDATA "CWS Codex"),
     [string] $CodexHome = (Join-Path $env:USERPROFILE ".cws-codex"),
-    [switch] $SkipExtensionInstall
+    [switch] $SkipExtensionInstall,
+    [switch] $SkipInitialSync,
+    [switch] $SkipBackgroundStart,
+    [Security.SecureString] $DeviceToken,
+    [string] $DesktopDir,
+    [string] $StartupDir
 )
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Common-CwsCodex.ps1")
+$InstallLogPath = Join-Path $env:TEMP "CWS-Codex-Install.log"
+
+trap {
+    $Details = @(
+        "$(Get-Date -Format o) installation failed",
+        "Message: $($_.Exception.Message)",
+        "Category: $($_.CategoryInfo)",
+        "Position: $($_.InvocationInfo.PositionMessage)",
+        "Stack: $($_.ScriptStackTrace)"
+    ) -join [Environment]::NewLine
+    try {
+        [System.IO.File]::WriteAllText($InstallLogPath, $Details + [Environment]::NewLine, (New-Object System.Text.UTF8Encoding($true)))
+    }
+    catch {
+        # Preserve the original installation error even if logging fails.
+    }
+    Write-Error "安装失败：$($_.Exception.Message)；详细日志：$InstallLogPath"
+    exit 1
+}
 
 Write-Host "正在安装 CWS Codex 员工端..." -ForegroundColor Cyan
-Set-CwsPrivateDirectoryAcl -Path $InstallDir
 Set-CwsPrivateDirectoryAcl -Path $CodexHome
 
 $PayloadFiles = @(
@@ -28,8 +51,29 @@ $PayloadFiles = @(
     "Uninstall.cmd",
     "诊断.cmd"
 )
-foreach ($File in $PayloadFiles) {
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot $File) -Destination (Join-Path $InstallDir $File) -Force
+function Copy-CwsPayload {
+    foreach ($File in $PayloadFiles) {
+        $SourcePath = Join-Path $PSScriptRoot $File
+        $DestinationPath = Join-Path $InstallDir $File
+        if ([System.IO.Path]::GetFullPath($SourcePath) -ine [System.IO.Path]::GetFullPath($DestinationPath)) {
+            Copy-Item -LiteralPath $SourcePath -Destination $DestinationPath -Force
+        }
+    }
+}
+
+Set-CwsPrivateDirectoryAcl -Path $InstallDir
+try {
+    Copy-CwsPayload
+}
+catch [System.UnauthorizedAccessException] {
+    if ([System.IO.Path]::GetFullPath($PSScriptRoot).TrimEnd("\") -ieq [System.IO.Path]::GetFullPath($InstallDir).TrimEnd("\")) {
+        throw
+    }
+    $BackupDir = "{0}.inaccessible-{1}-{2}" -f $InstallDir, (Get-Date -Format "yyyyMMdd-HHmmss"), $PID
+    Write-Warning "旧安装目录包含无法覆盖的文件，正在保留到：$BackupDir"
+    Move-Item -LiteralPath $InstallDir -Destination $BackupDir
+    Set-CwsPrivateDirectoryAcl -Path $InstallDir
+    Copy-CwsPayload
 }
 
 $TokenPath = Join-Path $InstallDir "device-token.dpapi"
@@ -39,16 +83,18 @@ if (Test-Path -LiteralPath $TokenPath) {
     $KeepExisting = (-not $Answer) -or $Answer.ToLowerInvariant().StartsWith("y")
 }
 if (-not $KeepExisting) {
-    $SecureToken = Read-Host "请输入管理员从服务器签发的本机专用设备令牌" -AsSecureString
+    $SecureToken = $DeviceToken
+    if (-not $SecureToken) {
+        $SecureToken = Read-Host "请输入管理员从服务器签发的本机专用设备令牌" -AsSecureString
+    }
     try {
         if ($SecureToken.Length -lt 20) {
             throw "设备令牌格式无效。"
         }
-        $EncryptedToken = $SecureToken | ConvertFrom-SecureString
-        if (-not $EncryptedToken) {
+        $ProtectionScheme = Protect-CwsDeviceToken -Token $SecureToken -Path $TokenPath
+        if (-not $ProtectionScheme) {
             throw "设备令牌不能为空。"
         }
-        $EncryptedToken | Set-Content -LiteralPath $TokenPath -Encoding UTF8
     }
     finally {
         if ($SecureToken) {
@@ -82,16 +128,23 @@ if (-not $SkipExtensionInstall) {
     }
 }
 
-try {
-    & (Join-Path $InstallDir "Sync-CwsCodex.ps1") -ConfigPath $ConfigPath -NewLease
-}
-catch {
-    Write-Warning "首次同步失败：$($_.Exception.Message)"
-    Write-Warning "安装已完成。连接公司内网或代理后，可双击桌面快捷方式重试。"
+if (-not $SkipInitialSync) {
+    try {
+        & (Join-Path $InstallDir "Sync-CwsCodex.ps1") -ConfigPath $ConfigPath -NewLease
+    }
+    catch {
+        Write-Warning "首次同步失败：$($_.Exception.Message)"
+        Write-Warning "安装已完成。连接公司内网或代理后，可双击桌面快捷方式重试。"
+    }
 }
 
-$Desktop = [Environment]::GetFolderPath("Desktop")
-$ShortcutPath = Join-Path $Desktop "公司 Codex（VS Code）.lnk"
+if (-not $DesktopDir) {
+    $DesktopDir = [Environment]::GetFolderPath("Desktop")
+}
+if (-not (Test-Path -LiteralPath $DesktopDir)) {
+    New-Item -ItemType Directory -Path $DesktopDir -Force | Out-Null
+}
+$ShortcutPath = Join-Path $DesktopDir "公司 Codex（VS Code）.lnk"
 $IconPath = Join-Path $InstallDir "CwsCodex.ico"
 $Shell = New-Object -ComObject WScript.Shell
 $Shortcut = $Shell.CreateShortcut($ShortcutPath)
@@ -102,10 +155,15 @@ $Shortcut.Description = "启动已配置公司 Codex 环境的 Visual Studio Cod
 $Shortcut.Save()
 
 @("CWS Codex.lnk", "公司编程助手.lnk") | ForEach-Object {
-    Remove-Item -LiteralPath (Join-Path $Desktop $_) -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $DesktopDir $_) -Force -ErrorAction SilentlyContinue
 }
 
-$StartupDir = [Environment]::GetFolderPath("Startup")
+if (-not $StartupDir) {
+    $StartupDir = [Environment]::GetFolderPath("Startup")
+}
+if (-not (Test-Path -LiteralPath $StartupDir)) {
+    New-Item -ItemType Directory -Path $StartupDir -Force | Out-Null
+}
 $StartupShortcutPath = Join-Path $StartupDir "公司 Codex 后台同步.lnk"
 $StartupShortcut = $Shell.CreateShortcut($StartupShortcutPath)
 $StartupShortcut.TargetPath = "powershell.exe"
@@ -121,6 +179,9 @@ $StartupShortcut.Save()
     Remove-Item -LiteralPath (Join-Path $StartupDir $_) -Force -ErrorAction SilentlyContinue
 }
 
-Start-Process -FilePath "powershell.exe" -ArgumentList $StartupShortcut.Arguments -WindowStyle Hidden
+if (-not $SkipBackgroundStart) {
+    Start-Process -FilePath "powershell.exe" -ArgumentList $StartupShortcut.Arguments -WindowStyle Hidden
+}
 
+Remove-Item -LiteralPath $InstallLogPath -Force -ErrorAction SilentlyContinue
 Write-Host "安装完成。请双击桌面的“公司 Codex（VS Code）”快捷方式。" -ForegroundColor Green

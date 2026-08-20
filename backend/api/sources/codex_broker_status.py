@@ -54,6 +54,7 @@ def normalize_codex_account(payload: Any) -> dict[str, Any]:
     credits = usage.get("credits") if isinstance(usage.get("credits"), dict) else {}
     return {
         "alias": str(payload.get("alias") or "unknown"),
+        "email": str(payload.get("email")) if payload.get("email") else None,
         "available": bool(payload.get("available")),
         "plan_type": payload.get("plan_type"),
         "usage_score": _number(payload.get("usage_score")),

@@ -4,11 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import io
 import tarfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
-VERSION = "0.1.1"
+VERSION = "0.1.3"
 ARCHIVE_ROOT = f"CWS-Codex-Server-v{VERSION}"
 PACKAGE_FILES = {
     Path("server-package/README-Server.txt"): Path("README-Server.txt"),
@@ -23,6 +24,7 @@ PACKAGE_FILES = {
     Path("CODEX_PLUS_SHARE.zh-CN.md"): Path("CODEX_PLUS_SHARE.zh-CN.md"),
     Path("SERVER_ACCOUNT_MANAGEMENT.zh-CN.md"): Path("SERVER_ACCOUNT_MANAGEMENT.zh-CN.md"),
 }
+TEXT_SUFFIXES = {".sh", ".py", ".txt", ".md", ".html", ".service", ".example"}
 
 
 def build(root: Path, output: Path) -> None:
@@ -32,7 +34,17 @@ def build(root: Path, output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(output, "w:gz") as archive:
         for source, destination in PACKAGE_FILES.items():
-            archive.add(root / source, arcname=str(Path(ARCHIVE_ROOT) / destination))
+            source_path = root / source
+            payload = source_path.read_bytes()
+            if source_path.suffix.lower() in TEXT_SUFFIXES:
+                payload = payload.replace(b"\r\n", b"\n")
+            info = archive.gettarinfo(
+                str(source_path),
+                arcname=str(PurePosixPath(ARCHIVE_ROOT, destination.as_posix())),
+            )
+            info.mode = 0o755 if source_path.suffix in {".sh", ".py"} else 0o644
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
 
 
 def main() -> int:

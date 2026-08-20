@@ -3,10 +3,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WINDOWS_CLIENT = ROOT / "windows-client"
+UTF8_BOM = b"\xef\xbb\xbf"
 
 
 def read(name: str) -> str:
-    return (WINDOWS_CLIENT / name).read_text(encoding="utf-8")
+    return (WINDOWS_CLIENT / name).read_text(encoding="utf-8-sig")
+
+
+def test_powershell_scripts_have_utf8_bom_for_windows_powershell_51():
+    scripts = sorted(WINDOWS_CLIENT.glob("*.ps1"))
+    assert scripts
+    assert all(path.read_bytes().startswith(UTF8_BOM) for path in scripts)
 
 
 def test_windows_bundle_contains_one_click_entrypoints():
@@ -47,11 +54,33 @@ def test_windows_client_uses_official_external_chatgpt_auth_without_refresh_toke
 def test_device_token_is_dpapi_encrypted_and_not_written_to_config():
     installer = read("Install-CwsCodex.ps1")
     common = read("Common-CwsCodex.ps1")
-    assert "ConvertFrom-SecureString" in installer
+    assert "Protect-CwsDeviceToken" in installer
+    assert "Add-Type -AssemblyName System.Security" in common
+    assert "System.Security.Cryptography.DataProtectionScope]::CurrentUser" in common
+    assert "System.Security.Cryptography.DataProtectionScope]::LocalMachine" in common
+    assert "scheme     = $Scheme" in common
     assert "ConvertTo-SecureString" in common
     assert '"device-token.dpapi"' in installer
     assert "device_token" not in installer.split("$Config =", 1)[1].split("Write-CwsJsonAtomic", 1)[0]
     assert "AsPlainText" not in installer
+
+
+def test_private_acl_preserves_safe_profile_inheritance():
+    common = read("Common-CwsCodex.ps1")
+    assert "/inheritance:e" in common
+    assert "/inheritance:r" not in common
+
+
+def test_installer_supports_isolated_local_smoke_test_and_persistent_error_log():
+    installer = read("Install-CwsCodex.ps1")
+    assert "[Security.SecureString] $DeviceToken" in installer
+    assert "[switch] $SkipInitialSync" in installer
+    assert "[switch] $SkipBackgroundStart" in installer
+    assert "[string] $DesktopDir" in installer
+    assert "[string] $StartupDir" in installer
+    assert "CWS-Codex-Install.log" in installer
+    assert "catch [System.UnauthorizedAccessException]" in installer
+    assert ".inaccessible-" in installer
 
 
 def test_employee_defaults_and_proxy_override_are_present():
@@ -62,12 +91,16 @@ def test_employee_defaults_and_proxy_override_are_present():
     assert "http://127.0.0.1:1082" in configure
 
 
-def test_launcher_sets_dedicated_codex_home_before_starting_vscode():
+def test_launcher_reuses_default_vscode_profile_with_managed_codex_home():
     launcher = read("Launch-CwsCodex.ps1")
     assert "$env:CODEX_HOME = $CodexHome" in launcher
     assert launcher.index("$env:CODEX_HOME = $CodexHome") < launcher.index("Start-Process -FilePath $VsCodePath")
-    assert '"--user-data-dir"' in launcher
-    assert 'Get-Process -Name "Code"' not in launcher
+    assert "--user-data-dir" not in launcher
+    assert "vscode-user-data" not in launcher
+    assert "--new-window" not in launcher
+    assert "Start-Process -FilePath $VsCodePath -ArgumentList" not in launcher
+    assert "Start-Process -FilePath $VsCodePath" in launcher
+    assert 'Get-Process -Name "Code"' in launcher
 
 
 def test_launcher_opens_vscode_even_when_credential_sync_fails_and_logs_reason():

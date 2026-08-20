@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string] $ConfigPath = (Join-Path $PSScriptRoot "config.json"),
     [switch] $NewLease,
     [switch] $Quiet
