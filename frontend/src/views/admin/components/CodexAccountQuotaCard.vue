@@ -2,7 +2,9 @@
   <n-card :title="$t('codexQuota.title')">
     <template #header-extra>
       <n-space>
-        <n-tag v-if="status?.broker_version" type="success">Broker v{{ status.broker_version }}</n-tag>
+        <n-tag v-if="status?.broker_version" type="success">
+          Broker v{{ status.broker_version }}
+        </n-tag>
         <n-tag>{{ $t('codexQuota.accounts') }}: {{ status?.accounts.length ?? 0 }}</n-tag>
         <n-tag type="success">
           {{ $t('codexQuota.available') }}: {{ availableCount }}
@@ -34,13 +36,22 @@
             <n-space align="center">
               <div>
                 <strong>{{ account.email || account.alias }}</strong>
-                <div v-if="account.email" class="text-xs opacity-60">{{ account.alias }}</div>
+                <div v-if="account.email" class="text-xs opacity-60">
+                  {{ account.alias }}
+                </div>
               </div>
               <n-tag size="small" :type="account.available ? 'success' : 'error'">
                 {{ account.available ? $t('codexQuota.ready') : $t('codexQuota.unavailable') }}
               </n-tag>
               <n-tag size="small">
                 {{ account.plan_type?.toUpperCase() || $t('codexQuota.unknownPlan') }}
+              </n-tag>
+              <n-tag size="small" :type="account.token_refresh_required ? 'warning' : 'success'">
+                {{
+                  account.token_refresh_required
+                    ? $t('codexQuota.refreshRequired')
+                    : $t('codexQuota.refreshNotRequired')
+                }}
               </n-tag>
             </n-space>
           </template>
@@ -51,6 +62,12 @@
             </n-descriptions-item>
             <n-descriptions-item :label="$t('codexQuota.activeLeases')">
               {{ account.active_leases }}
+            </n-descriptions-item>
+            <n-descriptions-item :label="$t('codexQuota.tokenExpiresAt')">
+              {{ formatOptionalTimestamp(account.access_token_expires_at) }}
+            </n-descriptions-item>
+            <n-descriptions-item :label="$t('codexQuota.lastTokenRefresh')">
+              {{ formatLastRefresh(account.last_token_refresh_at, account.last_token_refresh_reason) }}
             </n-descriptions-item>
           </n-descriptions>
 
@@ -82,6 +99,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 
 import {
   CodexAccountQuotaStatus,
@@ -91,6 +109,7 @@ import {
 
 const status = ref<CodexAccountQuotaStatus>();
 const loading = ref(false);
+const { t } = useI18n();
 let timer: number | undefined;
 
 const availableCount = computed(() => status.value?.accounts.filter((account) => account.available).length ?? 0);
@@ -99,6 +118,13 @@ const activeLeaseCount = computed(
 );
 
 const formatTimestamp = (timestamp: number) => new Date(timestamp * 1000).toLocaleString();
+const formatOptionalTimestamp = (timestamp: number | null) => (timestamp ? formatTimestamp(timestamp) : '—');
+const formatLastRefresh = (timestamp: string | null, reason: string | null) => {
+  if (!timestamp) return '—';
+  const formatted = new Date(timestamp).toLocaleString();
+  const reasonKey = reason === 'official_unauthorized' || reason === 'expiry_window' ? reason : null;
+  return reasonKey ? `${formatted} · ${t(`codexQuota.refreshReason.${reasonKey}`)}` : formatted;
+};
 const formatPercent = (value: number | null) => (value === null ? '—' : `${Math.round(value)}%`);
 const formatDuration = (seconds: number | null) => {
   if (!seconds) return '—';

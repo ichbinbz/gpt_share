@@ -424,6 +424,14 @@
     "unavailable": "Tidak tersedia",
     "unknownPlan": "Pelan tidak diketahui",
     "usageScore": "Skor penggunaan penghalaan",
+    "tokenExpiresAt": "Token akses tamat tempoh",
+    "lastTokenRefresh": "Segar semula token terakhir",
+    "refreshRequired": "Perlu disegar semula",
+    "refreshNotRequired": "Tidak perlu disegar semula",
+    "refreshReason": {
+      "expiry_window": "Memasuki tetingkap segar semula tamat tempoh",
+      "official_unauthorized": "Ditolak awal oleh endpoint rasmi"
+    },
     "noWindow": "Endpoint rasmi tidak mengembalikan tetingkap kuota.",
     "remaining": "Baki",
     "used": "Digunakan",

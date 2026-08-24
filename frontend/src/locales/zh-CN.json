@@ -445,6 +445,14 @@
     "unavailable": "不可用",
     "unknownPlan": "未知套餐",
     "usageScore": "调度使用分",
+    "tokenExpiresAt": "访问令牌到期时间",
+    "lastTokenRefresh": "上次令牌刷新",
+    "refreshRequired": "需要刷新",
+    "refreshNotRequired": "无需刷新",
+    "refreshReason": {
+      "expiry_window": "进入到期刷新窗口",
+      "official_unauthorized": "官方提前判定失效"
+    },
     "noWindow": "官方接口暂未返回额度窗口。",
     "remaining": "剩余",
     "used": "已用",

@@ -60,6 +60,17 @@ def normalize_codex_account(payload: Any) -> dict[str, Any]:
         "usage_score": _number(payload.get("usage_score")),
         "active_leases": int(_number(payload.get("active_leases")) or 0),
         "access_token_expires_at": _number(payload.get("access_token_expires_at")),
+        "token_refresh_required": bool(payload.get("token_refresh_required", False)),
+        "last_token_refresh_at": (
+            str(payload.get("last_token_refresh_at"))
+            if payload.get("last_token_refresh_at")
+            else None
+        ),
+        "last_token_refresh_reason": (
+            str(payload.get("last_token_refresh_reason"))
+            if payload.get("last_token_refresh_reason")
+            else None
+        ),
         "credits_balance": _number(credits.get("balance")),
         "credits_unlimited": bool(credits.get("unlimited", False)),
         "windows": windows,

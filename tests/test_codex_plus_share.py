@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from scripts.codex_plus_broker import (
+    AccountRecord,
     DailySessionUsage,
     DeviceIdentity,
     DeviceUsageStore,
@@ -62,6 +63,70 @@ def test_client_auth_uses_official_external_chatgpt_mode_without_refresh_token()
 def test_usage_score_uses_most_constrained_window():
     assert usage_score({"rate_limit": {"primary_window": {"used_percent": 20}, "secondary_window": {"used_percent": 75}}}) == 75
     assert usage_score(None) == 50
+
+
+def test_official_401_forces_oauth_refresh_and_retries_usage(tmp_path: Path):
+    old_access = jwt({"exp": 2_000_000_000})
+    new_access = jwt({"exp": 2_100_000_000})
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": old_access,
+                    "refresh_token": "old-refresh",
+                    "account_id": "acct-test",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class Response:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self.payload = payload
+
+        def json(self):
+            return self.payload
+
+    class Client:
+        def __init__(self):
+            self.posts = 0
+            self.gets = 0
+
+        async def post(self, *_args, **_kwargs):
+            self.posts += 1
+            return Response(
+                200,
+                {"access_token": new_access, "refresh_token": "new-refresh"},
+            )
+
+        async def get(self, *_args, **_kwargs):
+            self.gets += 1
+            if self.gets == 1:
+                return Response(401, {"error": {"code": "token_expired"}})
+            return Response(
+                200,
+                {"rate_limit": {"primary_window": {"used_percent": 12}}},
+            )
+
+    client = Client()
+    account = AccountRecord("account-test", auth_path)
+    broker = TokenBroker.__new__(TokenBroker)
+    broker.client = client
+    broker.settings = SimpleNamespace(refresh_window_seconds=900, usage_cache_seconds=30)
+
+    auth, usage = asyncio.run(broker._account_snapshot(account))
+
+    assert client.posts == 1
+    assert client.gets == 2
+    assert auth["tokens"]["access_token"] == new_access
+    assert usage["rate_limit"]["primary_window"]["used_percent"] == 12
+    stored = json.loads(auth_path.read_text(encoding="utf-8"))
+    assert stored["tokens"]["refresh_token"] == "new-refresh"
+    assert stored["last_refresh_reason"] == "official_unauthorized"
+    assert account.official_refresh_required is False
 
 
 def test_account_selection_prefers_large_allowance_that_resets_sooner():
@@ -219,7 +284,9 @@ def test_quota_dashboard_keeps_admin_token_in_tab_session_only():
     assert "/v1/admin/accounts" in dashboard
     assert "sessionStorage" in dashboard
     assert "localStorage" not in dashboard
-    assert "access_token" not in dashboard
+    assert "tokens.access_token" not in dashboard
+    assert "refresh_token" not in dashboard
+    assert "access_token_expires_at" in dashboard
     assert "account.email" in dashboard
     assert 'id="brokerVersion"' in dashboard
     assert 'id="onlyActive"' in dashboard

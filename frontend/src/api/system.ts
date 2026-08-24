@@ -62,6 +62,9 @@ export type CodexAccountQuota = {
   usage_score: number | null;
   active_leases: number;
   access_token_expires_at: number | null;
+  token_refresh_required: boolean;
+  last_token_refresh_at: string | null;
+  last_token_refresh_reason: string | null;
   credits_balance: number | null;
   credits_unlimited: boolean;
   windows: CodexQuotaWindow[];

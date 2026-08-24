@@ -437,6 +437,14 @@
     "unavailable": "Unavailable",
     "unknownPlan": "Unknown plan",
     "usageScore": "Routing usage score",
+    "tokenExpiresAt": "Access token expires",
+    "lastTokenRefresh": "Last token refresh",
+    "refreshRequired": "Refresh required",
+    "refreshNotRequired": "No refresh needed",
+    "refreshReason": {
+      "expiry_window": "Entered expiry refresh window",
+      "official_unauthorized": "Rejected early by official endpoint"
+    },
     "noWindow": "The official endpoint did not return a quota window.",
     "remaining": "Remaining",
     "used": "Used",

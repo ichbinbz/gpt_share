@@ -181,6 +181,12 @@ unset CWS_CODEX_ADMIN_TOKEN
 - `plan_type`：登录令牌中识别的订阅类型。
 - `usage_score`：调度器用于负载均衡的当前使用分数。
 - `usage`：官方额度窗口返回的数据。
+- `access_token_expires_at`：官方访问令牌 JWT 声明的到期时间（Unix 时间戳），不是 ChatGPT 订阅到期日。
+- `token_refresh_required`：令牌是否已经进入服务端配置的刷新窗口，或刚被官方接口提前判定失效。
+- `last_token_refresh_at`、`last_token_refresh_reason`：服务端最近一次刷新时间及原因。
+
+Broker 除了在令牌临近 JWT 到期时自动刷新，还会在官方额度接口提前返回 HTTP 401 时立即强制刷新，
+原子写回新凭据并重试一次。这样可处理 JWT `exp` 尚未到期、但官方已提前撤销访问令牌的情况。
 
 新账号会自动参加后续的新租约分配。已经运行的员工会话保持原账号亲和，不会因为新增账号
 立即跳转；重新获取租约或原租约到期后，才会重新参加负载选择。

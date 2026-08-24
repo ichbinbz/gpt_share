@@ -52,7 +52,7 @@ USER_INPUT_FIELDS = (
 )
 USAGE_FIELDS = TOKEN_FIELDS + USER_INPUT_FIELDS
 USAGE_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
-BROKER_VERSION = "0.1.5"
+BROKER_VERSION = "0.1.6"
 
 
 def _b64url_json(value: str) -> dict[str, Any]:
@@ -432,12 +432,19 @@ class DeviceUsageStore:
         )
 
 
+class UsageQueryError(RuntimeError):
+    def __init__(self, status_code: int):
+        self.status_code = status_code
+        super().__init__(f"usage query failed with HTTP {status_code}")
+
+
 class AccountRecord:
     def __init__(self, alias: str, auth_path: Path):
         self.alias = alias
         self.auth_path = auth_path
         self.lock = asyncio.Lock()
         self.usage_cache: tuple[float, dict[str, Any] | None] = (0.0, None)
+        self.official_refresh_required = False
 
     def read_auth(self) -> dict[str, Any]:
         payload = json.loads(self.auth_path.read_text(encoding="utf-8"))
@@ -449,15 +456,30 @@ class AccountRecord:
                 raise ValueError(f"{self.alias}: {key} is missing")
         return payload
 
-    async def ensure_fresh(self, client: httpx.AsyncClient, refresh_window: int) -> dict[str, Any]:
+    async def ensure_fresh(
+        self,
+        client: httpx.AsyncClient,
+        refresh_window: int,
+        *,
+        force: bool = False,
+        reason: str = "expiry_window",
+        rejected_access_token: str | None = None,
+    ) -> dict[str, Any]:
         async with self.lock:
             payload = self.read_auth()
             tokens = payload["tokens"]
+            if (
+                force
+                and rejected_access_token
+                and tokens["access_token"] != rejected_access_token
+            ):
+                self.official_refresh_required = False
+                return payload
             try:
                 expires_at = token_expiry(tokens["access_token"])
             except ValueError:
                 expires_at = 0
-            if expires_at > int(time.time()) + refresh_window:
+            if not force and expires_at > int(time.time()) + refresh_window:
                 return payload
 
             response = await client.post(
@@ -477,8 +499,10 @@ class AccountRecord:
                 if isinstance(value, str) and value:
                     tokens[key] = value
             payload["last_refresh"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            payload["last_refresh_reason"] = reason
             atomic_write_json(self.auth_path, payload)
             self.usage_cache = (0.0, None)
+            self.official_refresh_required = False
             return payload
 
     async def usage(self, client: httpx.AsyncClient, payload: dict[str, Any], cache_seconds: int) -> dict[str, Any]:
@@ -493,7 +517,7 @@ class AccountRecord:
             headers["ChatGPT-Account-Id"] = account_id
         response = await client.get(CHATGPT_USAGE_URL, headers=headers)
         if response.status_code >= 400:
-            raise RuntimeError(f"usage query failed with HTTP {response.status_code}")
+            raise UsageQueryError(response.status_code)
         result = response.json()
         if not isinstance(result, dict):
             raise RuntimeError("usage query returned a non-object")
@@ -621,6 +645,18 @@ class TokenBroker:
         auth = await account.ensure_fresh(self.client, self.settings.refresh_window_seconds)
         try:
             usage = await account.usage(self.client, auth, self.settings.usage_cache_seconds)
+        except UsageQueryError as exc:
+            if exc.status_code != 401:
+                return auth, None
+            account.official_refresh_required = True
+            auth = await account.ensure_fresh(
+                self.client,
+                self.settings.refresh_window_seconds,
+                force=True,
+                reason="official_unauthorized",
+                rejected_access_token=auth["tokens"]["access_token"],
+            )
+            usage = await account.usage(self.client, auth, self.settings.usage_cache_seconds)
         except Exception:
             usage = None
         return auth, usage
@@ -741,20 +777,49 @@ class TokenBroker:
                 auth, usage = await self._account_snapshot(account)
                 tokens = auth["tokens"]
                 access_token = tokens["access_token"]
+                access_token_expires_at = token_expiry(access_token)
                 results.append(
                     {
                         "alias": alias,
                         "email": token_email(tokens.get("id_token"), access_token),
                         "available": True,
                         "plan_type": token_plan_type(access_token),
-                        "access_token_expires_at": token_expiry(access_token),
+                        "access_token_expires_at": access_token_expires_at,
+                        "token_refresh_required": access_token_expires_at
+                        <= int(time.time()) + self.settings.refresh_window_seconds
+                        or account.official_refresh_required,
+                        "last_token_refresh_at": auth.get("last_refresh"),
+                        "last_token_refresh_reason": auth.get("last_refresh_reason"),
                         "usage_score": usage_score(usage),
                         "active_leases": active_counts.get(alias, 0),
                         "usage": usage,
                     }
                 )
             except Exception as exc:
-                results.append({"alias": alias, "available": False, "error": str(exc)})
+                result: dict[str, Any] = {
+                    "alias": alias,
+                    "available": False,
+                    "error": str(exc),
+                }
+                try:
+                    auth = account.read_auth()
+                    access_token = auth["tokens"]["access_token"]
+                    access_token_expires_at = token_expiry(access_token)
+                    result.update(
+                        {
+                            "email": token_email(auth["tokens"].get("id_token"), access_token),
+                            "plan_type": token_plan_type(access_token),
+                            "access_token_expires_at": access_token_expires_at,
+                            "token_refresh_required": access_token_expires_at
+                            <= int(time.time()) + self.settings.refresh_window_seconds
+                            or account.official_refresh_required,
+                            "last_token_refresh_at": auth.get("last_refresh"),
+                            "last_token_refresh_reason": auth.get("last_refresh_reason"),
+                        }
+                    )
+                except Exception:
+                    pass
+                results.append(result)
         return results
 
 

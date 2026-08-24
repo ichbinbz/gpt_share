@@ -22,6 +22,10 @@ def test_normalizes_codex_quota_without_exposing_raw_usage():
             "plan_type": "pro",
             "usage_score": 72,
             "active_leases": 2,
+            "access_token_expires_at": 2_000_000_100,
+            "token_refresh_required": True,
+            "last_token_refresh_at": "2026-08-24T10:00:00Z",
+            "last_token_refresh_reason": "official_unauthorized",
             "usage": {
                 "rate_limit": {
                     "primary_window": {
@@ -43,6 +47,9 @@ def test_normalizes_codex_quota_without_exposing_raw_usage():
     assert account["alias"] == "account-03"
     assert account["email"] == "employee@example.com"
     assert account["active_leases"] == 2
+    assert account["access_token_expires_at"] == 2_000_000_100
+    assert account["token_refresh_required"] is True
+    assert account["last_token_refresh_reason"] == "official_unauthorized"
     assert account["windows"][0]["remaining_percent"] == 28
     assert account["windows"][1]["remaining_percent"] == 75
     assert "usage" not in account
