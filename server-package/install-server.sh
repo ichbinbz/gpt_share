@@ -27,6 +27,7 @@ install -m 0755 "${PACKAGE_DIR}/codex_plus_broker.py" "${APP_DIR}/codex_plus_bro
 install -m 0755 "${PACKAGE_DIR}/codex_device_tokens.py" "${APP_DIR}/codex_device_tokens.py"
 install -m 0755 "${PACKAGE_DIR}/import_employee_tokens_xlsx.py" "${APP_DIR}/import_employee_tokens_xlsx.py"
 install -m 0644 "${PACKAGE_DIR}/codex_quota_dashboard.html" "${APP_DIR}/codex_quota_dashboard.html"
+install -m 0644 "${PACKAGE_DIR}/codex_token_portal.html" "${APP_DIR}/codex_token_portal.html"
 install -m 0644 "${PACKAGE_DIR}/requirements-server.txt" "${APP_DIR}/requirements-server.txt"
 
 python3 -m venv "${VENV_DIR}"

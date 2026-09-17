@@ -129,8 +129,17 @@ def test_launcher_opens_vscode_even_when_credential_sync_fails_and_logs_reason()
     launcher = read("Launch-CwsCodex.ps1")
     assert "Credential synchronization failed" in launcher
     assert "仍将启动 VS Code" in launcher
+    assert 'Write-Warning \'凭据同步失败，仍将启动 VS Code。请运行安装目录中的“诊断.cmd”检查代理和令牌。\'' in launcher
     assert "launch.log" in launcher
     assert launcher.index("catch {") < launcher.index("Start-Process -FilePath $VsCodePath")
+
+
+def test_launcher_requests_a_new_lease_once_per_client_start():
+    launcher = read("Launch-CwsCodex.ps1")
+    watcher = read("Watch-CwsCodex.ps1")
+    expected_sync = '& (Join-Path $PSScriptRoot "Sync-CwsCodex.ps1") -ConfigPath $ConfigPath -NewLease'
+    assert expected_sync in launcher
+    assert "-NewLease" not in watcher
 
 
 def test_diagnostics_checks_vscode_proxy_broker_and_token_without_printing_secret():

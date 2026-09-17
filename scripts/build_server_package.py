@@ -19,6 +19,7 @@ PACKAGE_FILES = {
     Path("scripts/codex_device_tokens.py"): Path("codex_device_tokens.py"),
     Path("scripts/import_employee_tokens_xlsx.py"): Path("import_employee_tokens_xlsx.py"),
     Path("scripts/codex_quota_dashboard.html"): Path("codex_quota_dashboard.html"),
+    Path("scripts/codex_token_portal.html"): Path("codex_token_portal.html"),
     Path("deploy/cws-codex-broker.env.example"): Path("cws-codex-broker.env.example"),
     Path("deploy/cws-codex-broker.service"): Path("cws-codex-broker.service"),
     Path("CODEX_PLUS_SHARE.zh-CN.md"): Path("CODEX_PLUS_SHARE.zh-CN.md"),

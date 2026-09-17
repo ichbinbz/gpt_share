@@ -8,7 +8,7 @@ CWS Codex Windows 员工端
 - 管理员从服务器签发、专门分配给本机的 CWS 设备令牌
 
 安装：
-1. 推荐直接双击 Release 中的图形安装程序“CWS-Codex-Setup-v0.1.5.exe”，不需要手工解压。
+1. 推荐直接双击 Release 中的图形安装程序“CWS-Codex-Setup-v0.1.6.exe”，不需要手工解压。
 2. 使用管理员排障 ZIP 时，应先解压整个 ZIP，再双击“安装.cmd”或“Install.cmd”。不需要管理员权限。
 3. 首次输入管理员从服务器签发的本机专用设备令牌。
 4. 安装完成后，双击桌面的“公司 Codex（VS Code）”。

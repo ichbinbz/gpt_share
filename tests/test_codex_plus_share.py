@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+from fastapi.testclient import TestClient
+import scripts.codex_plus_broker as broker_module
 from scripts.codex_plus_broker import (
     AccountRecord,
     DailySessionUsage,
@@ -13,12 +15,16 @@ from scripts.codex_plus_broker import (
     SessionTokenUsage,
     TokenBroker,
     account_selection_key,
+    create_portal_user,
+    derive_user_device_token,
+    find_portal_user,
     normalize_ip,
     token_account_id,
     token_expiry,
     token_plan_type,
     token_email,
     usage_score,
+    verify_user_password,
 )
 from scripts.codex_plus_sync import DEFAULT_BROKER_URL, DEFAULT_PROXY_URL, codex_auth_payload
 from scripts.codex_plus_sync import request_lease
@@ -63,6 +69,75 @@ def test_client_auth_uses_official_external_chatgpt_mode_without_refresh_token()
 def test_usage_score_uses_most_constrained_window():
     assert usage_score({"rate_limit": {"primary_window": {"used_percent": 20}, "secondary_window": {"used_percent": 75}}}) == 75
     assert usage_score(None) == 50
+
+
+def test_portal_user_has_hashed_password_and_recoverable_fixed_device_token():
+    registry = {"version": 1, "devices": []}
+    secret = "portal-secret-that-is-longer-than-thirty-two-characters"
+    user, token = create_portal_user(registry, "Zhang.San", "00123", secret)
+    assert user["username"] == "zhang.san"
+    assert user["employee_id"] == "00123"
+    assert user["password_hash"].startswith("pbkdf2_sha256$")
+    assert verify_user_password("00123", user["password_hash"])
+    assert not verify_user_password("00124", user["password_hash"])
+    assert token == derive_user_device_token(secret, "zhang.san", "00123")
+    assert token not in json.dumps(registry)
+    assert find_portal_user(registry, "ZHANG.SAN") is user
+
+
+def test_portal_pages_expose_admin_create_and_self_service_query_endpoints():
+    root = Path(__file__).resolve().parents[1]
+    dashboard = (root / "scripts" / "codex_quota_dashboard.html").read_text(encoding="utf-8")
+    portal = (root / "scripts" / "codex_token_portal.html").read_text(encoding="utf-8")
+    broker_source = (root / "scripts" / "codex_plus_broker.py").read_text(encoding="utf-8")
+    assert "/v1/admin/users" in dashboard
+    assert "/v1/token/query" in portal
+    assert '@app.get("/token"' in broker_source
+    assert '@app.post("/v1/admin/users"' in broker_source
+
+
+def test_admin_creates_user_and_user_queries_token_without_plaintext_storage(
+    tmp_path: Path, monkeypatch
+):
+    registry_path = tmp_path / "device-tokens.json"
+    monkeypatch.setattr(
+        broker_module,
+        "settings",
+        SimpleNamespace(
+            device_token_file=registry_path,
+            admin_token="admin-token-that-is-longer-than-thirty-two-characters",
+            user_token_secret="portal-secret-that-is-longer-than-thirty-two-characters",
+        ),
+    )
+    broker_module.token_query_failures.clear()
+    client = TestClient(broker_module.app)
+    created = client.post(
+        "/v1/admin/users",
+        headers={"Authorization": "Bearer admin-token-that-is-longer-than-thirty-two-characters"},
+        json={"username": "li.si", "employee_id": "00042"},
+    )
+    assert created.status_code == 200
+    queried = client.post(
+        "/v1/token/query",
+        json={"username": "LI.SI", "password": "00042"},
+    )
+    assert queried.status_code == 200, queried.text
+    assert queried.headers["cache-control"] == "no-store"
+    token = queried.json()["device_token"]
+    assert token.startswith("cwsdt_")
+    assert token not in registry_path.read_text(encoding="utf-8")
+    identity = broker_module._registered_device_identity(token)
+    assert identity is not None
+    assert identity.employee_id == "00042"
+    duplicate = client.post(
+        "/v1/admin/users",
+        headers={"Authorization": "Bearer admin-token-that-is-longer-than-thirty-two-characters"},
+        json={"username": "li.si", "employee_id": "00043"},
+    )
+    assert duplicate.status_code == 409
+    assert client.post(
+        "/v1/token/query", json={"username": "li.si", "password": "wrong"}
+    ).status_code == 401
 
 
 def test_official_401_forces_oauth_refresh_and_retries_usage(tmp_path: Path):

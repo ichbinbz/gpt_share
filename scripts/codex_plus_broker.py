@@ -15,9 +15,11 @@ import hmac
 import ipaddress
 import json
 import os
+import re
 import secrets
 import tempfile
 import time
+import uuid
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -25,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, Request as FastAPIRequest
+from fastapi import Depends, FastAPI, Header, HTTPException, Request as FastAPIRequest, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -53,6 +55,125 @@ USER_INPUT_FIELDS = (
 USAGE_FIELDS = TOKEN_FIELDS + USER_INPUT_FIELDS
 USAGE_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
 BROKER_VERSION = "0.1.6"
+USERNAME_PATTERN = re.compile(r"^[a-z][a-z0-9._-]{1,63}$")
+EMPLOYEE_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+PASSWORD_HASH_ITERATIONS = 310_000
+TOKEN_QUERY_WINDOW_SECONDS = 900
+TOKEN_QUERY_MAX_FAILURES = 8
+
+
+def normalize_username(value: str) -> str:
+    username = value.strip().lower()
+    if not USERNAME_PATTERN.fullmatch(username):
+        raise ValueError("username must be 2-64 lowercase pinyin characters")
+    return username
+
+
+def normalize_employee_id(value: str) -> str:
+    employee_id = value.strip()
+    if not EMPLOYEE_ID_PATTERN.fullmatch(employee_id):
+        raise ValueError("employee id must be 1-64 letters, numbers, dots, underscores, or hyphens")
+    return employee_id
+
+
+def hash_user_password(password: str, *, salt: bytes | None = None) -> str:
+    actual_salt = salt or secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), actual_salt, PASSWORD_HASH_ITERATIONS
+    )
+    return "pbkdf2_sha256${}${}${}".format(
+        PASSWORD_HASH_ITERATIONS,
+        base64.urlsafe_b64encode(actual_salt).decode("ascii").rstrip("="),
+        base64.urlsafe_b64encode(digest).decode("ascii").rstrip("="),
+    )
+
+
+def verify_user_password(password: str, encoded: str) -> bool:
+    try:
+        algorithm, iterations, salt_text, expected_text = encoded.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        salt = base64.urlsafe_b64decode(salt_text + "=" * (-len(salt_text) % 4))
+        expected = base64.urlsafe_b64decode(expected_text + "=" * (-len(expected_text) % 4))
+        actual = hashlib.pbkdf2_hmac(
+            "sha256", password.encode("utf-8"), salt, int(iterations)
+        )
+    except (ValueError, TypeError):
+        return False
+    return hmac.compare_digest(actual, expected)
+
+
+def derive_user_device_token(secret: str, username: str, employee_id: str) -> str:
+    if len(secret) < 32:
+        raise ValueError("CWS_CODEX_USER_TOKEN_SECRET must contain at least 32 characters")
+    message = f"cws-user-token-v1\0{username}\0{employee_id}".encode("utf-8")
+    digest = hmac.new(secret.encode("utf-8"), message, hashlib.sha256).digest()
+    return "cwsdt_" + base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
+def public_portal_user(device: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": device.get("id"),
+        "username": device.get("username"),
+        "employee_id": device.get("employee_id"),
+        "label": device.get("label"),
+        "enabled": bool(device.get("enabled", False)),
+        "created_at": device.get("created_at"),
+        "revoked_at": device.get("revoked_at"),
+    }
+
+
+def create_portal_user(
+    registry: dict[str, Any], username: str, employee_id: str, token_secret: str
+) -> tuple[dict[str, Any], str]:
+    normalized_username = normalize_username(username)
+    normalized_employee_id = normalize_employee_id(employee_id)
+    devices = registry.setdefault("devices", [])
+    if not isinstance(devices, list):
+        raise ValueError("device token registry is invalid")
+    for device in devices:
+        if not isinstance(device, dict):
+            continue
+        if device.get("username") == normalized_username:
+            raise ValueError("username already exists")
+        if device.get("employee_id") == normalized_employee_id:
+            raise ValueError("employee id already exists")
+    token = derive_user_device_token(
+        token_secret, normalized_username, normalized_employee_id
+    )
+    device = {
+        "id": str(uuid.uuid4()),
+        "label": f"{normalized_username}-{normalized_employee_id}",
+        "employee_name": normalized_username,
+        "employee_id": normalized_employee_id,
+        "username": normalized_username,
+        "password_hash": hash_user_password(normalized_employee_id),
+        "token_hash": hashlib.sha256(token.encode("utf-8")).hexdigest(),
+        "enabled": True,
+        "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "portal_user": True,
+    }
+    devices.append(device)
+    registry["version"] = max(2, int(registry.get("version", 1)))
+    return device, token
+
+
+def find_portal_user(registry: dict[str, Any], username: str) -> dict[str, Any] | None:
+    try:
+        normalized = normalize_username(username)
+    except ValueError:
+        return None
+    devices = registry.get("devices") if isinstance(registry, dict) else None
+    if not isinstance(devices, list):
+        return None
+    for device in reversed(devices):
+        if (
+            isinstance(device, dict)
+            and device.get("portal_user") is True
+            and device.get("username") == normalized
+        ):
+            return device
+    return None
 
 
 def _b64url_json(value: str) -> dict[str, Any]:
@@ -152,6 +273,7 @@ class BrokerSettings:
     device_token_file: Path
     device_tokens: tuple[str, ...]
     admin_token: str | None
+    user_token_secret: str | None
     lease_seconds: int
     lease_rotation_seconds: int
     refresh_window_seconds: int
@@ -173,6 +295,11 @@ class BrokerSettings:
             ),
             device_tokens=device_tokens,
             admin_token=os.getenv("CWS_CODEX_ADMIN_TOKEN") or None,
+            user_token_secret=(
+                os.getenv("CWS_CODEX_USER_TOKEN_SECRET")
+                or os.getenv("CWS_CODEX_ADMIN_TOKEN")
+                or None
+            ),
             lease_seconds=int(os.getenv("CWS_CODEX_LEASE_SECONDS", "28800")),
             lease_rotation_seconds=max(
                 3600, int(os.getenv("CWS_CODEX_LEASE_ROTATION_SECONDS", "86400"))
@@ -186,6 +313,16 @@ class LeaseRequest(BaseModel):
     device_id: str = Field(min_length=1, max_length=200)
     lease_id: str | None = Field(default=None, max_length=200)
     client_ip: str | None = Field(default=None, max_length=45)
+
+
+class PortalUserCreateRequest(BaseModel):
+    username: str = Field(min_length=2, max_length=64)
+    employee_id: str = Field(min_length=1, max_length=64)
+
+
+class PortalTokenQueryRequest(BaseModel):
+    username: str = Field(min_length=2, max_length=64)
+    password: str = Field(min_length=1, max_length=128)
 
 
 class DailySessionUsage(BaseModel):
@@ -842,10 +979,94 @@ def request_source_ip(request: FastAPIRequest) -> str | None:
     return normalize_ip(request.client.host if request.client else None)
 
 
+def load_device_registry() -> dict[str, Any]:
+    try:
+        registry = json.loads(settings.device_token_file.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {"version": 2, "devices": []}
+    except (json.JSONDecodeError, OSError) as exc:
+        raise HTTPException(status_code=503, detail="device token registry is unavailable") from exc
+    if not isinstance(registry, dict) or not isinstance(registry.get("devices"), list):
+        raise HTTPException(status_code=503, detail="device token registry is invalid")
+    return registry
+
+
+def save_device_registry_with_lock(
+    update: Any,
+) -> Any:
+    lock_path = settings.device_token_file.with_suffix(
+        settings.device_token_file.suffix + ".lock"
+    )
+    lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with lock_path.open("a+", encoding="utf-8") as lock:
+        os.chmod(lock_path, 0o600)
+        try:
+            import fcntl
+
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        except ImportError:
+            pass
+        registry = load_device_registry()
+        result = update(registry)
+        atomic_write_json(settings.device_token_file, registry)
+        return result
+
+
+def portal_users() -> list[dict[str, Any]]:
+    devices = load_device_registry().get("devices", [])
+    users = [
+        public_portal_user(device)
+        for device in devices
+        if isinstance(device, dict) and device.get("portal_user") is True
+    ]
+    return sorted(users, key=lambda item: str(item.get("username") or ""))
+
+
 settings = BrokerSettings.from_env()
 broker = TokenBroker(settings)
 usage_store = DeviceUsageStore(settings.usage_state_file)
 app = FastAPI(title="CWS Codex Plus Broker", version=BROKER_VERSION)
+device_registry_write_lock = asyncio.Lock()
+token_query_failure_lock = asyncio.Lock()
+token_query_failures: dict[str, list[float]] = {}
+dummy_password_hash = hash_user_password("invalid-portal-password")
+
+
+def token_query_key(request: FastAPIRequest, username: str) -> str:
+    try:
+        source = request_source_ip(request) or "unknown"
+    except HTTPException:
+        # Some trusted ASGI proxies and test clients expose a hostname instead
+        # of a literal IP address. Authentication must still work, while the
+        # username portion keeps the fallback rate-limit key specific.
+        source = "unknown"
+    return f"{source}:{username.strip().lower()[:64]}"
+
+
+async def enforce_token_query_limit(key: str) -> None:
+    now = time.time()
+    async with token_query_failure_lock:
+        recent = [
+            value
+            for value in token_query_failures.get(key, [])
+            if now - value < TOKEN_QUERY_WINDOW_SECONDS
+        ]
+        if recent:
+            token_query_failures[key] = recent
+        else:
+            token_query_failures.pop(key, None)
+        if len(recent) >= TOKEN_QUERY_MAX_FAILURES:
+            raise HTTPException(status_code=429, detail="too many failed token queries")
+
+
+async def record_token_query_failure(key: str) -> None:
+    async with token_query_failure_lock:
+        token_query_failures.setdefault(key, []).append(time.time())
+
+
+async def clear_token_query_failures(key: str) -> None:
+    async with token_query_failure_lock:
+        token_query_failures.pop(key, None)
 
 
 def _legacy_device_identity(supplied: str) -> DeviceIdentity:
@@ -936,6 +1157,53 @@ async def quota_dashboard() -> HTMLResponse:
         raise HTTPException(status_code=503, detail="quota dashboard asset is unavailable")
 
 
+@app.get("/token", response_class=HTMLResponse, include_in_schema=False)
+async def token_portal() -> HTMLResponse:
+    portal_path = Path(__file__).with_name("codex_token_portal.html")
+    try:
+        return HTMLResponse(
+            portal_path.read_text(encoding="utf-8"),
+            headers={"Cache-Control": "no-store"},
+        )
+    except OSError:
+        raise HTTPException(status_code=503, detail="token portal asset is unavailable")
+
+
+@app.post("/v1/token/query")
+async def query_own_token(
+    request: PortalTokenQueryRequest,
+    http_request: FastAPIRequest,
+    response: Response,
+) -> dict[str, Any]:
+    key = token_query_key(http_request, request.username)
+    await enforce_token_query_limit(key)
+    registry = load_device_registry()
+    user = find_portal_user(registry, request.username)
+    encoded = str(user.get("password_hash")) if user else dummy_password_hash
+    valid = verify_user_password(request.password, encoded)
+    if not user or not user.get("enabled", False) or not valid:
+        await record_token_query_failure(key)
+        raise HTTPException(status_code=401, detail="invalid username or password")
+    if not settings.user_token_secret:
+        raise HTTPException(status_code=503, detail="user token secret is not configured")
+    token = derive_user_device_token(
+        settings.user_token_secret,
+        str(user["username"]),
+        str(user["employee_id"]),
+    )
+    expected_hash = str(user.get("token_hash") or "")
+    actual_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    if not expected_hash or not hmac.compare_digest(actual_hash, expected_hash):
+        raise HTTPException(status_code=503, detail="user token secret does not match registry")
+    await clear_token_query_failures(key)
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "username": user["username"],
+        "employee_id": user["employee_id"],
+        "device_token": token,
+    }
+
+
 @app.post("/v1/lease")
 async def create_lease(
     request: LeaseRequest,
@@ -987,6 +1255,32 @@ async def list_device_usage() -> dict[str, Any]:
         "devices": await usage_store.summary(_device_registry_summary()),
         "fetched_at": time.time(),
     }
+
+
+@app.get("/v1/admin/users", dependencies=[Depends(require_admin)])
+async def list_portal_users() -> dict[str, Any]:
+    return {"version": BROKER_VERSION, "users": portal_users(), "fetched_at": time.time()}
+
+
+@app.post("/v1/admin/users", dependencies=[Depends(require_admin)])
+async def add_portal_user(request: PortalUserCreateRequest) -> dict[str, Any]:
+    if not settings.user_token_secret:
+        raise HTTPException(status_code=503, detail="user token secret is not configured")
+    async with device_registry_write_lock:
+        try:
+            user, _token = save_device_registry_with_lock(
+                lambda registry: create_portal_user(
+                    registry,
+                    request.username,
+                    request.employee_id,
+                    settings.user_token_secret or "",
+                )
+            )
+        except ValueError as exc:
+            message = str(exc)
+            status_code = 409 if "already exists" in message else 422
+            raise HTTPException(status_code=status_code, detail=message) from exc
+    return {"user": public_portal_user(user)}
 
 
 if __name__ == "__main__":

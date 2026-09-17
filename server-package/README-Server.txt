@@ -22,6 +22,8 @@ CWS Codex Linux 服务端部署包
    /var/lib/cws-codex/auth.json
 
 4. 编辑 /etc/cws-codex/broker.env，将 CWS_CODEX_ADMIN_TOKEN 替换为随机长令牌。
+   同时将 CWS_CODEX_USER_TOKEN_SECRET 替换为另一个至少 32 字符的随机令牌；该值用于重建
+   用户自助查询的设备令牌，创建用户后必须保持稳定。
    可用以下命令生成：
 
    python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
@@ -48,6 +50,17 @@ CWS Codex Linux 服务端部署包
 - 查看服务日志：
 
   journalctl -u cws-codex-broker -f
+
+- 管理员额度与用户管理页面：
+
+  http://codex.cws.internal:8765/quota
+
+- 员工 Token 自助查询入口：
+
+  http://codex.cws.internal:8765/token
+
+  管理员在额度页面输入姓名拼音用户名和工号增加用户。员工使用姓名拼音作为用户名、工号作为
+  初始密码查询自己的设备令牌。服务器仅保存密码派生哈希和设备令牌哈希，不保存明文。
 
 新增 Plus 账号、批量导入员工令牌、代理访问和额度页面的完整说明见包内：
 - CODEX_PLUS_SHARE.zh-CN.md

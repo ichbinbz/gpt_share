@@ -1,4 +1,4 @@
-CWS Codex Ubuntu/Linux 员工端 v0.1.5
+CWS Codex Ubuntu/Linux 员工端 v0.1.6
 =====================================
 
 系统要求：
@@ -7,7 +7,7 @@ CWS Codex Ubuntu/Linux 员工端 v0.1.5
 - systemd 用户服务（建议，用于每 5 分钟自动同步）
 
 安装：
-1. 解压 CWS-Codex-Linux-v0.1.5.tar.gz。
+1. 解压 CWS-Codex-Linux-v0.1.6.tar.gz。
 2. 打开终端进入解压后的目录，不要使用 sudo。
 3. 执行：
 

@@ -60,13 +60,13 @@ if ($InstallExtension -and -not $ExtensionInstalled) {
 
 $SyncSucceeded = $true
 try {
-    & (Join-Path $PSScriptRoot "Sync-CwsCodex.ps1") -ConfigPath $ConfigPath
+    & (Join-Path $PSScriptRoot "Sync-CwsCodex.ps1") -ConfigPath $ConfigPath -NewLease
     Write-CwsLaunchLog "Credential synchronization succeeded."
 }
 catch {
     $SyncSucceeded = $false
     Write-CwsLaunchLog ("Credential synchronization failed: " + $_.Exception.Message)
-    Write-Warning "凭据同步失败，仍将启动 VS Code。请运行安装目录中的“诊断.cmd”检查代理和令牌。"
+    Write-Warning '凭据同步失败，仍将启动 VS Code。请运行安装目录中的“诊断.cmd”检查代理和令牌。'
 }
 
 $CodexHome = [Environment]::ExpandEnvironmentVariables([string] $Config.codex_home)

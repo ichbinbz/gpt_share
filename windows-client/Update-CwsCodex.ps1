@@ -6,7 +6,7 @@
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Common-CwsCodex.ps1")
 
-$CurrentVersion = [Version] "0.1.5"
+$CurrentVersion = [Version] "0.1.6"
 $Repository = "ichbinbz/gpt_share"
 $ReleaseApiUrl = "https://api.github.com/repos/ichbinbz/gpt_share/releases/latest"
 $Config = Get-CwsConfig -ConfigPath $ConfigPath

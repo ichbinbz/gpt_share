@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>CWS Codex 用户令牌查询</title>
+  <style>
+    :root { color-scheme:dark; --bg:#07111f; --panel:#0e1c2f; --line:#28405f; --text:#edf5ff; --muted:#91a4bc; --cyan:#38d7ff; --green:#43df9b; --red:#ff697d; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; display:grid; place-items:center; padding:22px; font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; color:var(--text); background:radial-gradient(circle at 10% 0%,#123152 0,transparent 36%),radial-gradient(circle at 90% 15%,#123c47 0,transparent 30%),var(--bg); }
+    main { width:min(520px,100%); border:1px solid var(--line); border-radius:22px; padding:28px; background:linear-gradient(145deg,rgba(19,39,63,.97),rgba(10,24,42,.97)); box-shadow:0 28px 90px rgba(0,0,0,.4); }
+    h1 { margin:0 0 8px; font-size:30px; letter-spacing:-.04em; }
+    p { margin:0 0 22px; color:var(--muted); }
+    label { display:block; margin:14px 0 6px; color:var(--muted); }
+    input,button { width:100%; font:inherit; border-radius:11px; }
+    input { border:1px solid var(--line); padding:12px 13px; color:var(--text); background:#091729; outline:none; }
+    input:focus { border-color:var(--cyan); }
+    button { margin-top:18px; border:1px solid #2a7690; padding:12px 15px; color:#041018; background:linear-gradient(90deg,var(--green),var(--cyan)); font-weight:750; cursor:pointer; }
+    button:disabled { opacity:.65; cursor:wait; }
+    .result,.error { margin-top:20px; border:1px solid var(--line); border-radius:14px; padding:16px; }
+    .result { background:rgba(67,223,155,.08); }
+    .error { color:#ffd6dc; border-color:rgba(255,105,125,.55); background:rgba(255,105,125,.08); }
+    .token { margin-top:8px; font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; overflow-wrap:anywhere; user-select:all; }
+    .copy { width:auto; margin-top:12px; padding:8px 12px; color:var(--text); background:#14263d; border-color:var(--line); font-weight:600; }
+    .hint { margin-top:18px; font-size:13px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>查询设备令牌</h1>
+    <p>用户名为姓名拼音，初始密码为工号。令牌仅在本页显示，请勿发送给他人。</p>
+    <form id="queryForm">
+      <label for="username">用户名</label>
+      <input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="例如 zhangsan" required minlength="2" maxlength="64">
+      <label for="password">密码</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" placeholder="请输入工号" required maxlength="128">
+      <button id="submit" type="submit">查询我的 Token</button>
+    </form>
+    <section id="message" hidden></section>
+    <p class="hint">查询成功后请在 CWS Codex 安装程序中输入该令牌。本页不会在浏览器中保存密码或令牌。</p>
+  </main>
+  <script>
+    const form=document.getElementById('queryForm');
+    const message=document.getElementById('message');
+    const submit=document.getElementById('submit');
+    const text=(tag,cls,value)=>{const el=document.createElement(tag);if(cls)el.className=cls;el.textContent=String(value??'');return el;};
+    function showError(value){message.className='error';message.textContent=value;message.hidden=false;}
+    function showToken(data){message.className='result';message.replaceChildren(text('strong','',`${data.username} 的设备令牌`),text('div','token',data.device_token));const copy=text('button','copy','复制 Token');copy.type='button';copy.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(data.device_token);copy.textContent='已复制';}catch{copy.textContent='请手动选择并复制';}});message.append(copy);message.hidden=false;}
+    form.addEventListener('submit',async event=>{event.preventDefault();submit.disabled=true;message.hidden=true;const password=document.getElementById('password');try{const response=await fetch('/v1/token/query',{method:'POST',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:document.getElementById('username').value.trim().toLowerCase(),password:password.value})});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(response.status===429?'尝试次数过多，请稍后再试。':response.status===401?'用户名或密码错误。':data.detail||`查询失败（HTTP ${response.status}）`);showToken(data);}catch(error){showError(error.message||String(error));}finally{password.value='';submit.disabled=false;}});
+  </script>
+</body>
+</html>

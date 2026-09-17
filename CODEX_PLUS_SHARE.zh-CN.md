@@ -36,6 +36,7 @@
 ```bash
 export CWS_CODEX_DEVICE_TOKEN_FILE='/var/lib/cws-codex/device-tokens.json'
 export CWS_CODEX_ADMIN_TOKEN='仅管理员使用的随机长令牌'
+export CWS_CODEX_USER_TOKEN_SECRET='用于用户自助令牌的另一个随机长密钥'
 python scripts/codex_plus_broker.py
 ```
 
@@ -45,8 +46,14 @@ python scripts/codex_plus_broker.py
 
 额度来自官方 Codex usage 接口。调度分数以主窗口和次窗口中较高的 `used_percent` 为基础，并对当前活跃租约增加惩罚，优先分配余量较多、负载较低的账号。
 
-管理员可通过 `http://codex.cws.internal:8765/quota` 打开独立只读页面，或在 CWS 管理后台的
+管理员可通过 `http://codex.cws.internal:8765/quota` 打开独立管理页面，或在 CWS 管理后台的
 “系统管理”页面查看账号额度和按员工令牌归属的 Token 使用量。独立页面仅能通过当前内网代理/VLESS 访问。
+
+额度页面同时提供用户管理入口。管理员输入姓名拼音用户名和工号后创建用户；员工访问
+`http://codex.cws.internal:8765/token`，以姓名拼音为用户名、工号为初始密码查询自己的设备令牌。
+服务端使用 PBKDF2 保存密码哈希，并通过 `CWS_CODEX_USER_TOKEN_SECRET` 确定性重建设备令牌，
+磁盘上仍只保存设备令牌 SHA-256 哈希。该密钥创建用户后必须保持稳定；未配置时兼容性回退为
+`CWS_CODEX_ADMIN_TOKEN`。查询接口按用户名和来源地址限制连续失败次数。
 
 ## 员工端同步
 
@@ -90,9 +97,9 @@ $env:CWS_CODEX_DEVICE_TOKEN='该设备的随机令牌'
 .\scripts\start_vscode_cws_codex_windows.ps1
 ```
 
-Windows 员工日常使用建议分发 `dist/CWS-Codex-Release-v0.1.5.zip`，其中包含标准图形安装器
-`CWS-Codex-Setup-v0.1.5.exe` 和简明的 `使用说明.txt`。员工解压后双击安装器即可安装，并可在
-Windows“已安装的应用”中卸载。`dist/CWS-Codex-Windows-v0.1.5.zip`
+Windows 员工日常使用建议分发 `dist/CWS-Codex-Release-v0.1.6.zip`，其中包含标准图形安装器
+`CWS-Codex-Setup-v0.1.6.exe` 和简明的 `使用说明.txt`。员工解压后双击安装器即可安装，并可在
+Windows“已安装的应用”中卸载。`dist/CWS-Codex-Windows-v0.1.6.zip`
 保留用于管理员排障。员工输入管理员
 为本机签发的令牌后，安装器会使用 Windows DPAPI 保存令牌、安装/检查
 官方 `openai.chatgpt` 扩展、创建独立 `%USERPROFILE%\.cws-codex`，并在桌面生成 `公司 Codex（VS Code）`
@@ -100,7 +107,7 @@ Windows“已安装的应用”中卸载。`dist/CWS-Codex-Windows-v0.1.5.zip`
 VS Code 是否打开，每 5 分钟同步短期凭据并上报 Token 累计值。后台使用互斥锁避免重复运行，电脑
 休眠或断网恢复后会从本地累计记录补报。
 
-Ubuntu/Linux 员工端发布包为 `dist/CWS-Codex-Linux-v0.1.5.tar.gz`。员工解压后以普通用户运行
+Ubuntu/Linux 员工端发布包为 `dist/CWS-Codex-Linux-v0.1.6.tar.gz`。员工解压后以普通用户运行
 `./install.sh`，不要使用 sudo。安装器会把客户端放到 `~/.local/share/cws-codex`，创建应用菜单和
 可选桌面入口，并启用 systemd 用户级定时器。设备令牌存放在权限为 `600` 的用户私有文件中；
 启动 VS Code 时复用用户原有配置、默认 `~/.codex` 和历史对话，仅替换其中的 `auth.json`。客户端状态、原凭据备份和租约保存在 `~/.cws-codex`；卸载时会在安全校验后恢复原凭据。安装前已有会话不会计入公司 Token 用量上报。
