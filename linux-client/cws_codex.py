@@ -8,6 +8,7 @@ import getpass
 import hashlib
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -16,6 +17,8 @@ import tarfile
 import tempfile
 import urllib.error
 import urllib.request
+import warnings
+from urllib.parse import urljoin, urlsplit
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -42,6 +45,12 @@ USER_INPUT_FIELDS = (
 USAGE_FIELDS = TOKEN_FIELDS + USER_INPUT_FIELDS
 CHINA_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
 DEFAULT_LEASE_ROTATION_SECONDS = 86400
+SEMVER_PATTERN = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+
+
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
 
 
 def private_directory(path: Path) -> None:
@@ -187,6 +196,28 @@ def local_ipv4() -> str | None:
     return None
 
 
+def open_url(
+    url: str,
+    headers: dict[str, str],
+    proxy_url: str,
+    timeout: int,
+    *,
+    block_redirects: bool = False,
+    data: bytes | None = None,
+) -> Any:
+    proxy_handler = (
+        urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
+        if proxy_url
+        else urllib.request.ProxyHandler({})
+    )
+    handlers: list[Any] = [proxy_handler]
+    if block_redirects:
+        handlers.append(NoRedirectHandler())
+    opener = urllib.request.build_opener(*handlers)
+    request = urllib.request.Request(url, data=data, headers=headers)
+    return opener.open(request, timeout=timeout)
+
+
 def request_json(
     url: str,
     *,
@@ -194,43 +225,235 @@ def request_json(
     device_token: str | None = None,
     body: dict[str, Any] | None = None,
     timeout: int = 30,
+    block_redirects: bool = False,
+    source_name: str = "Broker",
 ) -> dict[str, Any]:
-    proxy_handler = (
-        urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
-        if proxy_url
-        else urllib.request.ProxyHandler({})
-    )
-    opener = urllib.request.build_opener(proxy_handler)
-    headers = {"Accept": "application/json"}
-    data = None
+    headers = {"Accept": "application/json", "User-Agent": f"CWS-Codex-Linux/{VERSION}"}
     if device_token:
         headers["Authorization"] = f"Bearer {device_token}"
+    data = None
     if body is not None:
         headers["Content-Type"] = "application/json"
         data = json.dumps(body, separators=(",", ":")).encode("utf-8")
-    request = urllib.request.Request(url, data=data, headers=headers)
     try:
-        with opener.open(request, timeout=timeout) as response:
+        open_kwargs: dict[str, Any] = {"block_redirects": block_redirects}
+        if data is not None:
+            open_kwargs["data"] = data
+        with open_url(url, headers, proxy_url, timeout, **open_kwargs) as response:
             payload = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Broker 返回 HTTP {exc.code}: {detail}") from exc
+        raise RuntimeError(f"{source_name} 返回 HTTP {exc.code}: {detail}") from exc
     except urllib.error.URLError as exc:
-        raise RuntimeError(f"无法连接 Broker：{exc.reason}") from exc
+        raise RuntimeError(f"无法连接 {source_name}：{exc.reason}") from exc
     try:
         value = json.loads(payload)
     except json.JSONDecodeError as exc:
-        raise RuntimeError("Broker 返回了无效 JSON") from exc
+        raise RuntimeError(f"{source_name} 返回了无效 JSON") from exc
     if not isinstance(value, dict):
-        raise RuntimeError("Broker 返回格式无效")
+        raise RuntimeError(f"{source_name} 返回格式无效")
     return value
 
 
 def version_tuple(value: str) -> tuple[int, int, int]:
-    parts = value.strip().lstrip("v").split(".")
-    if len(parts) != 3 or any(not part.isdigit() for part in parts):
-        raise RuntimeError(f"GitHub Release 版本号无效：{value}")
-    return tuple(int(part) for part in parts)  # type: ignore[return-value]
+    normalized = value.strip()
+    if not re.fullmatch(SEMVER_PATTERN, normalized):
+        raise RuntimeError(f"更新版本号无效：{value}")
+    return tuple(int(part) for part in normalized.split("."))  # type: ignore[return-value]
+
+
+def literal_size(value: Any, source_name: str) -> int:
+    if type(value) is not int or value < 0:
+        raise RuntimeError(f"{source_name} 发布清单的 size 必须是非负 JSON 整数")
+    return value
+
+
+def parsed_origin(url: str, source_name: str) -> tuple[str, str, int]:
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+    except ValueError as exc:
+        raise RuntimeError(f"{source_name} 下载地址无效") from exc
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        raise RuntimeError(f"{source_name} 下载地址无效")
+    normalized_port = port if port is not None else (443 if parsed.scheme == "https" else 80)
+    return (parsed.scheme.lower(), parsed.hostname.lower(), normalized_port)
+
+
+def safe_update_error(exc: Exception, device_token: str = "") -> str:
+    message = str(exc)
+    if device_token:
+        message = message.replace(device_token, "[redacted]")
+    return re.sub(r"(?i)Bearer\s+[^\s,;]+", "Bearer [redacted]", message)
+
+
+def broker_release_candidate(config: dict[str, Any], device_token: str) -> dict[str, Any]:
+    broker_base = str(config.get("broker_url") or "").strip().rstrip("/")
+    if not broker_base:
+        raise RuntimeError("配置中缺少 broker_url")
+    broker_origin = parsed_origin(broker_base, "Broker")
+    manifest_url = f"{broker_base}/v1/client/releases/latest"
+    release = request_json(
+        manifest_url,
+        proxy_url=str(config.get("proxy_url") or ""),
+        device_token=device_token,
+        block_redirects=True,
+        source_name="Broker",
+    )
+    latest = str(release.get("release_version") or "").strip()
+    version_tuple(latest)
+    asset_name = f"CWS-Codex-Linux-v{latest}.tar.gz"
+    assets = release.get("assets")
+    asset = next(
+        (
+            item
+            for item in assets if isinstance(item, dict)
+            and item.get("platform") == "linux-tarball" and item.get("name") == asset_name
+        ),
+        None,
+    ) if isinstance(assets, list) else None
+    if not asset or asset.get("name") != asset_name:
+        raise RuntimeError(f"Broker 发布清单缺少 Linux 安装包：{asset_name}")
+    size = literal_size(asset.get("size"), "Broker")
+    sha256 = asset.get("sha256")
+    if not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", sha256):
+        raise RuntimeError("Broker 发布清单的 SHA-256 无效")
+    raw_url = asset.get("download_url")
+    if not isinstance(raw_url, str) or not raw_url:
+        raise RuntimeError("Broker 发布清单缺少下载地址")
+    download_url = urljoin(f"{broker_base}/", raw_url)
+    if parsed_origin(download_url, "Broker") != broker_origin:
+        raise RuntimeError("Broker 发布清单的下载地址不是同源地址")
+    return {
+        "source": "Broker",
+        "version": latest,
+        "name": asset_name,
+        "size": size,
+        "sha256": sha256,
+        "download_url": download_url,
+        "headers": {"Authorization": f"Bearer {device_token}", "User-Agent": f"CWS-Codex-Linux/{VERSION}"},
+    }
+
+
+def github_release_candidate(config: dict[str, Any]) -> dict[str, Any]:
+    release = request_json(
+        f"https://api.github.com/repos/{GITHUB_REPOSITORY}/releases/latest",
+        proxy_url=str(config.get("proxy_url") or ""),
+        source_name="GitHub",
+    )
+    tag = str(release.get("tag_name") or "").strip()
+    latest = tag[1:] if tag.startswith("v") else tag
+    version_tuple(latest)
+    asset_name = f"CWS-Codex-Linux-v{latest}.tar.gz"
+    assets = release.get("assets")
+    asset = next(
+        (item for item in assets if isinstance(item, dict) and item.get("name") == asset_name),
+        None,
+    ) if isinstance(assets, list) else None
+    if not asset or asset.get("name") != asset_name:
+        raise RuntimeError(f"GitHub Release 缺少 Linux 安装包：{asset_name}")
+    size = literal_size(asset.get("size"), "GitHub")
+    digest = asset.get("digest")
+    if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        raise RuntimeError("GitHub Release 的 SHA-256 无效")
+    raw_url = asset.get("browser_download_url")
+    if not isinstance(raw_url, str):
+        raise RuntimeError("GitHub Release 缺少下载地址")
+    try:
+        parsed = urlsplit(raw_url)
+        port = parsed.port
+    except ValueError as exc:
+        raise RuntimeError("GitHub Release 下载地址无效") from exc
+    expected_path = f"/{GITHUB_REPOSITORY}/releases/download/v{latest}/{asset_name}"
+    if (
+        parsed.scheme != "https" or parsed.hostname != "github.com" or port not in {None, 443}
+        or parsed.username or parsed.password or parsed.path != expected_path or parsed.query or parsed.fragment
+    ):
+        raise RuntimeError("GitHub Release 下载地址未通过安全检查")
+    return {
+        "source": "GitHub",
+        "version": latest,
+        "name": asset_name,
+        "size": size,
+        "sha256": digest.removeprefix("sha256:"),
+        "download_url": raw_url,
+        "headers": {"User-Agent": f"CWS-Codex-Linux/{VERSION}"},
+    }
+
+
+def select_release_candidate(config: dict[str, Any], device_token: str) -> dict[str, Any]:
+    try:
+        return broker_release_candidate(config, device_token)
+    except Exception as broker_error:
+        broker_reason = safe_update_error(broker_error, device_token)
+        print(f"警告：Broker 更新检查失败，改用 GitHub：{broker_reason}", file=sys.stderr)
+    try:
+        return github_release_candidate(config)
+    except Exception as github_error:
+        github_reason = safe_update_error(github_error)
+        raise RuntimeError(f"Broker 更新检查失败：{broker_reason}；GitHub 更新检查失败：{github_reason}") from github_error
+
+
+def safe_extract_tar(archive_path: Path, extract_root: Path) -> None:
+    root = extract_root.resolve()
+    with tarfile.open(archive_path, "r:gz") as archive:
+        for member in archive.getmembers():
+            target = (extract_root / member.name).resolve()
+            if root not in target.parents and target != root:
+                raise RuntimeError("Linux 更新包包含不安全路径")
+            if member.issym():
+                link_target = (target.parent / member.linkname).resolve()
+                if root not in link_target.parents and link_target != root:
+                    raise RuntimeError("Linux 更新包包含不安全符号链接")
+            if member.islnk():
+                link_target = (extract_root / member.linkname).resolve()
+                if root not in link_target.parents and link_target != root:
+                    raise RuntimeError("Linux 更新包包含不安全硬链接")
+            if member.isdev() or member.isfifo():
+                raise RuntimeError("Linux 更新包包含不安全特殊文件")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            archive.extractall(extract_root)
+
+
+def install_release_candidate(candidate: dict[str, Any], config: dict[str, Any]) -> bool:
+    proxy_url = str(config.get("proxy_url") or "")
+    with tempfile.TemporaryDirectory(prefix="cws-codex-update-") as temporary:
+        archive_path = Path(temporary) / str(candidate["name"])
+        with open_url(
+            str(candidate["download_url"]),
+            dict(candidate["headers"]),
+            proxy_url,
+            180,
+            block_redirects=candidate.get("source") == "Broker",
+        ) as response, archive_path.open("wb") as output:
+            shutil.copyfileobj(response, output)
+        actual_size = archive_path.stat().st_size
+        if actual_size != candidate["size"]:
+            raise RuntimeError(f"下载文件 size 校验失败：期望 {candidate['size']}，实际 {actual_size}")
+        actual_sha256 = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+        if actual_sha256 != candidate["sha256"]:
+            raise RuntimeError("下载文件 SHA-256 校验失败")
+        extract_root = Path(temporary) / "extracted"
+        extract_root.mkdir()
+        safe_extract_tar(archive_path, extract_root)
+        installer = extract_root / f"CWS-Codex-Linux-v{candidate['version']}" / "install.sh"
+        if not installer.is_file():
+            raise RuntimeError("Linux 更新包缺少 install.sh")
+        command = [
+            str(installer),
+            "--auto-update",
+            "--skip-extension",
+            "--broker-url",
+            str(config["broker_url"]),
+            "--codex-home",
+            str(config["codex_home"]),
+            "--client-home",
+            str(config.get("client_home") or "~/.cws-codex"),
+        ]
+        command.extend(["--proxy-url", proxy_url] if proxy_url else ["--direct"])
+        subprocess.run(command, check=True)
+    return True
 
 
 def confirm_graphical_update(version: str) -> bool:
@@ -263,83 +486,26 @@ def check_for_update(config_path: Path = CONFIG_PATH, *, force: bool = False) ->
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             pass
 
-    release = request_json(
-        f"https://api.github.com/repos/{GITHUB_REPOSITORY}/releases/latest",
-        proxy_url=str(config.get("proxy_url") or ""),
-    )
-    latest = str(release.get("tag_name") or "").lstrip("v")
+    device_token = read_device_token(config_path.parent / "device-token")
+    candidate = select_release_candidate(config, device_token)
+    latest = str(candidate["version"])
     latest_tuple = version_tuple(latest)
     write_json_atomic(
         state_path,
         {
             "version": 1,
             "last_checked_at": now.isoformat(),
+            "current_version": VERSION,
             "latest_version": latest,
+            "source": candidate["source"],
         },
     )
+    print(f"CWS Codex 当前版本：{VERSION}；更新来源：{candidate['source']}；最新版本：{latest}")
     if latest_tuple <= version_tuple(VERSION):
         return False
-
-    asset_name = f"CWS-Codex-Linux-v{latest}.tar.gz"
-    asset = next(
-        (
-            item
-            for item in release.get("assets", [])
-            if isinstance(item, dict) and item.get("name") == asset_name
-        ),
-        None,
-    )
-    if not asset or not asset.get("browser_download_url"):
-        raise RuntimeError(f"GitHub Release 缺少 Linux 安装包：{asset_name}")
-    url = str(asset["browser_download_url"])
-    expected_prefix = f"https://github.com/{GITHUB_REPOSITORY}/releases/download/"
-    if not url.startswith(expected_prefix):
-        raise RuntimeError("GitHub Release 下载地址未通过安全检查")
     if not confirm_graphical_update(latest):
         return False
-
-    proxy_url = str(config.get("proxy_url") or "")
-    proxy_handler = (
-        urllib.request.ProxyHandler({"http": proxy_url, "https": proxy_url})
-        if proxy_url
-        else urllib.request.ProxyHandler({})
-    )
-    opener = urllib.request.build_opener(proxy_handler)
-    with tempfile.TemporaryDirectory(prefix="cws-codex-update-") as temporary:
-        archive_path = Path(temporary) / asset_name
-        request = urllib.request.Request(url, headers={"User-Agent": f"CWS-Codex-Linux/{VERSION}"})
-        with opener.open(request, timeout=180) as response, archive_path.open("wb") as output:
-            shutil.copyfileobj(response, output)
-        digest = str(asset.get("digest") or "")
-        if digest.startswith("sha256:"):
-            actual = hashlib.sha256(archive_path.read_bytes()).hexdigest()
-            if actual != digest.removeprefix("sha256:").lower():
-                raise RuntimeError("下载文件 SHA-256 校验失败")
-        extract_root = Path(temporary) / "extracted"
-        extract_root.mkdir()
-        with tarfile.open(archive_path, "r:gz") as archive:
-            for member in archive.getmembers():
-                target = (extract_root / member.name).resolve()
-                if extract_root.resolve() not in target.parents and target != extract_root.resolve():
-                    raise RuntimeError("Linux 更新包包含不安全路径")
-            archive.extractall(extract_root)
-        installer = next(extract_root.glob("CWS-Codex-Linux-v*/install.sh"), None)
-        if not installer:
-            raise RuntimeError("Linux 更新包缺少 install.sh")
-        command = [
-            str(installer),
-            "--auto-update",
-            "--skip-extension",
-            "--broker-url",
-            str(config["broker_url"]),
-            "--codex-home",
-            str(config["codex_home"]),
-            "--client-home",
-            str(config.get("client_home") or "~/.cws-codex"),
-        ]
-        command.extend(["--proxy-url", proxy_url] if proxy_url else ["--direct"])
-        subprocess.run(command, check=True)
-    return True
+    return install_release_candidate(candidate, config)
 
 
 def find_vscode(configured: str = "") -> str | None:
