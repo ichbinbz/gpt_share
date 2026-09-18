@@ -1689,6 +1689,96 @@ RELEASE_MEDIA_TYPES = {
     "CWS-Codex-Server-v0.1.7.tar.gz": "application/gzip",
 }
 
+WINDOWS_FILE_ATTRIBUTE_DIRECTORY = 0x10
+WINDOWS_FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+
+
+def _windows_create_file_handle(path: Path) -> int:
+    import ctypes
+    from ctypes import wintypes
+
+    create_file = ctypes.WinDLL("kernel32", use_last_error=True).CreateFileW
+    create_file.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    )
+    create_file.restype = wintypes.HANDLE
+    handle = create_file(
+        str(path),
+        0x80000000,  # GENERIC_READ
+        0x00000001,  # FILE_SHARE_READ (no concurrent write/delete opens)
+        None,
+        3,  # OPEN_EXISTING
+        0x00200000 | 0x08000000,  # OPEN_REPARSE_POINT | SEQUENTIAL_SCAN
+        None,
+    )
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    return int(handle)
+
+
+def _windows_file_attributes(handle: int) -> int:
+    import ctypes
+    from ctypes import wintypes
+
+    class FileAttributeTagInfo(ctypes.Structure):
+        _fields_ = (("file_attributes", wintypes.DWORD), ("reparse_tag", wintypes.DWORD))
+
+    info = FileAttributeTagInfo()
+    get_info = ctypes.WinDLL("kernel32", use_last_error=True).GetFileInformationByHandleEx
+    get_info.argtypes = (
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+    )
+    get_info.restype = wintypes.BOOL
+    if not get_info(handle, 9, ctypes.byref(info), ctypes.sizeof(info)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return int(info.file_attributes)
+
+
+def _windows_handle_to_fd(handle: int) -> int:
+    import msvcrt
+
+    return msvcrt.open_osfhandle(handle, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+
+
+def _windows_close_handle(handle: int) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    close_handle = ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle
+    close_handle.argtypes = (wintypes.HANDLE,)
+    close_handle.restype = wintypes.BOOL
+    close_handle(handle)
+
+
+def _open_windows_release_asset(path: Path) -> BinaryIO:
+    handle: int | None = _windows_create_file_handle(path)
+    asset_fd: int | None = None
+    try:
+        attributes = _windows_file_attributes(handle)
+        if attributes & WINDOWS_FILE_ATTRIBUTE_REPARSE_POINT:
+            raise OSError("release asset reparse points are not allowed")
+        if attributes & WINDOWS_FILE_ATTRIBUTE_DIRECTORY:
+            raise FileNotFoundError(path)
+        asset_fd = _windows_handle_to_fd(handle)
+        handle = None
+        result = os.fdopen(asset_fd, "rb", closefd=True)
+        asset_fd = None
+        return result
+    finally:
+        if asset_fd is not None:
+            os.close(asset_fd)
+        if handle is not None:
+            _windows_close_handle(handle)
+
 
 def _open_release_asset(release_dir: Path, name: str) -> BinaryIO:
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
@@ -1705,14 +1795,7 @@ def _open_release_asset(release_dir: Path, name: str) -> BinaryIO:
             asset_fd = os.open(name, flags | os.O_NOFOLLOW, dir_fd=directory_fd)
         else:
             candidate = release_dir / name
-            link_stat = candidate.lstat()
-            file_attributes = getattr(link_stat, "st_file_attributes", 0)
-            reparse_point = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
-            if stat.S_ISLNK(link_stat.st_mode) or (
-                reparse_point and file_attributes & reparse_point
-            ):
-                raise OSError("release asset must not be a link or reparse point")
-            asset_fd = os.open(candidate, flags)
+            return _open_windows_release_asset(candidate)
         handle = os.fdopen(asset_fd, "rb", closefd=True)
         asset_fd = None
         return handle
@@ -1723,22 +1806,35 @@ def _open_release_asset(release_dir: Path, name: str) -> BinaryIO:
             os.close(directory_fd)
 
 
-def _validate_open_release_asset(handle: BinaryIO, asset: dict[str, Any]) -> None:
+def _validate_open_release_asset(
+    handle: BinaryIO,
+    asset: dict[str, Any],
+    snapshot: BinaryIO | None = None,
+) -> None:
     before = os.fstat(handle.fileno())
     if not stat.S_ISREG(before.st_mode):
         raise FileNotFoundError
     digest = hashlib.sha256()
+    copied_size = 0
     for chunk in iter(lambda: handle.read(1024 * 1024), b""):
         digest.update(chunk)
+        copied_size += len(chunk)
+        if snapshot is not None:
+            snapshot.write(chunk)
     after = os.fstat(handle.fileno())
     if (
         before.st_size != asset["size"]
         or after.st_size != asset["size"]
+        or copied_size != asset["size"]
         or before.st_mtime_ns != after.st_mtime_ns
         or not hmac.compare_digest(digest.hexdigest(), asset["sha256"])
     ):
         raise ValueError("release asset integrity mismatch")
-    handle.seek(0)
+    if snapshot is not None:
+        snapshot.flush()
+        if os.fstat(snapshot.fileno()).st_size != asset["size"]:
+            raise ValueError("release snapshot size mismatch")
+        snapshot.seek(0)
 
 
 def load_validated_release_manifest(
@@ -1765,7 +1861,7 @@ def load_validated_release_manifest(
         raise HTTPException(status_code=503, detail="release metadata is invalid")
 
     candidates: dict[str, Path] = {}
-    retained_handle = None
+    retained_snapshot = None
     try:
         for asset in payload["assets"]:
             if (
@@ -1796,40 +1892,52 @@ def load_validated_release_manifest(
             if resolved_candidate.parent != release_dir:
                 raise HTTPException(status_code=503, detail="release metadata is invalid")
             handle = None
+            snapshot = None
             try:
                 handle = _open_release_asset(release_dir, name)
-                _validate_open_release_asset(handle, asset)
+                if name == retain_filename:
+                    snapshot = tempfile.TemporaryFile(mode="w+b")
+                _validate_open_release_asset(handle, asset, snapshot)
             except FileNotFoundError:
-                if handle is not None:
-                    handle.close()
                 raise HTTPException(status_code=404, detail="release asset not found")
             except ValueError:
-                if handle is not None:
-                    handle.close()
                 raise HTTPException(status_code=503, detail="release asset validation failed")
             except OSError:
+                raise HTTPException(status_code=503, detail="release asset is unavailable")
+            finally:
                 if handle is not None:
                     handle.close()
-                raise HTTPException(status_code=503, detail="release asset is unavailable")
-            if name == retain_filename:
-                retained_handle = handle
-                handle = None
-            if handle is not None:
-                handle.close()
+            if snapshot is not None:
+                retained_snapshot = snapshot
+                snapshot = None
             candidates[name] = candidate
-        return payload, candidates, retained_handle
+        return payload, candidates, retained_snapshot
     except BaseException:
-        if retained_handle is not None:
-            retained_handle.close()
+        if retained_snapshot is not None:
+            retained_snapshot.close()
+        if "snapshot" in locals() and snapshot is not None:
+            snapshot.close()
         raise
 
 
 def _release_file_chunks(handle: BinaryIO) -> Iterator[bytes]:
-    try:
-        for chunk in iter(lambda: handle.read(64 * 1024), b""):
-            yield chunk
-    finally:
-        handle.close()
+    yield from iter(lambda: handle.read(64 * 1024), b"")
+
+
+class ReleaseSnapshotResponse(StreamingResponse):
+    def __init__(self, snapshot: BinaryIO, **kwargs: Any) -> None:
+        self.snapshot = snapshot
+        try:
+            super().__init__(_release_file_chunks(snapshot), **kwargs)
+        except BaseException:
+            snapshot.close()
+            raise
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self.snapshot.close()
 
 
 @app.get("/healthz")
@@ -1851,19 +1959,19 @@ async def latest_client_release(
 async def download_client_release(
     filename: str,
     _identity: DeviceIdentity = Depends(require_device),
-) -> StreamingResponse:
-    manifest, candidates, handle = load_validated_release_manifest(filename)
+) -> ReleaseSnapshotResponse:
+    manifest, candidates, snapshot = load_validated_release_manifest(filename)
     if not valid_asset_name(filename):
-        if handle is not None:
-            handle.close()
+        if snapshot is not None:
+            snapshot.close()
         raise HTTPException(status_code=404, detail="release asset not found")
-    if filename not in candidates or handle is None:
-        if handle is not None:
-            handle.close()
+    if filename not in candidates or snapshot is None:
+        if snapshot is not None:
+            snapshot.close()
         raise HTTPException(status_code=404, detail="release asset not found")
     asset = next(item for item in manifest["assets"] if item["name"] == filename)
-    return StreamingResponse(
-        _release_file_chunks(handle),
+    return ReleaseSnapshotResponse(
+        snapshot,
         media_type=RELEASE_MEDIA_TYPES[filename],
         headers={
             "Cache-Control": "private",

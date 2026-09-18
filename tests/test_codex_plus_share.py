@@ -92,6 +92,35 @@ def configure_client_release(tmp_path: Path, monkeypatch, payload: bytes = b"ins
     return asset_name, manifest
 
 
+async def render_release_response(response, send_override=None) -> bytes:
+    messages = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        messages.append(message)
+        if send_override is not None:
+            await send_override(message)
+
+    await response(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/v1/client/releases/download/test",
+            "headers": [],
+            "asgi": {"spec_version": "2.4"},
+        },
+        receive,
+        send,
+    )
+    return b"".join(
+        message.get("body", b"")
+        for message in messages
+        if message["type"] == "http.response.body"
+    )
+
+
 def test_client_release_routes_require_device_authentication(tmp_path: Path, monkeypatch):
     asset_name, _manifest = configure_client_release(tmp_path, monkeypatch)
     client = TestClient(broker_module.app)
@@ -223,32 +252,102 @@ def test_client_release_download_streams_the_descriptor_that_was_validated(
             # POSIX permits replacement, but the open descriptor must remain bound
             # to the validated inode in either case.
             pass
-        messages = []
-
-        async def receive():
-            return {"type": "http.request", "body": b"", "more_body": False}
-
-        async def send(message):
-            messages.append(message)
-
-        await response(
-            {
-                "type": "http",
-                "method": "GET",
-                "path": f"/v1/client/releases/download/{asset_name}",
-                "headers": [],
-                "asgi": {"spec_version": "2.4"},
-            },
-            receive,
-            send,
-        )
-        return b"".join(
-            message.get("body", b"")
-            for message in messages
-            if message["type"] == "http.response.body"
-        )
+        return await render_release_response(response)
 
     assert asyncio.run(request_then_swap()) == b"installer"
+
+
+def test_client_release_download_streams_verified_snapshot_after_in_place_source_write(
+    tmp_path: Path, monkeypatch
+):
+    asset_name, _manifest = configure_client_release(tmp_path, monkeypatch)
+    asset_path = tmp_path / asset_name
+
+    async def request_then_modify() -> bytes:
+        response = await broker_module.download_client_release(
+            asset_name,
+            DeviceIdentity(token_id="test", label="test"),
+        )
+        asset_path.write_bytes(b"attacker!")
+        return await render_release_response(response)
+
+    assert asyncio.run(request_then_modify()) == b"installer"
+
+
+@pytest.mark.parametrize("failure", ["send", "cancel"])
+def test_client_release_snapshot_closes_on_stream_failure(
+    tmp_path: Path, monkeypatch, failure: str
+):
+    asset_name, _manifest = configure_client_release(tmp_path, monkeypatch)
+    real_temporary_file = broker_module.tempfile.TemporaryFile
+    snapshots = []
+
+    def tracked_temporary_file(*args, **kwargs):
+        snapshot = real_temporary_file(*args, **kwargs)
+        snapshots.append(snapshot)
+        return snapshot
+
+    monkeypatch.setattr(broker_module.tempfile, "TemporaryFile", tracked_temporary_file)
+
+    async def request_then_fail() -> None:
+        response = await broker_module.download_client_release(
+            asset_name,
+            DeviceIdentity(token_id="test", label="test"),
+        )
+        assert snapshots and snapshots[0].closed is False
+
+        async def fail_on_body(message):
+            if message["type"] != "http.response.body":
+                return
+            if failure == "cancel":
+                raise asyncio.CancelledError
+            raise RuntimeError("simulated send failure")
+
+        expected = asyncio.CancelledError if failure == "cancel" else RuntimeError
+        with pytest.raises(expected):
+            await render_release_response(response, fail_on_body)
+
+    asyncio.run(request_then_fail())
+    assert len(snapshots) == 1
+    assert snapshots[0].closed is True
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows handle semantics")
+def test_windows_release_open_rejects_reparse_handle_before_fd_conversion(
+    tmp_path: Path, monkeypatch
+):
+    closed = []
+    converted = []
+    monkeypatch.setattr(
+        broker_module,
+        "_windows_create_file_handle",
+        lambda _path: 123,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        broker_module,
+        "_windows_file_attributes",
+        lambda _handle: 0x400,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        broker_module,
+        "_windows_handle_to_fd",
+        lambda handle: converted.append(handle),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        broker_module,
+        "_windows_close_handle",
+        lambda handle: closed.append(handle),
+        raising=False,
+    )
+
+    with pytest.raises(OSError, match="reparse"):
+        broker_module._open_windows_release_asset(tmp_path / "asset")
+
+    assert converted == []
+    assert closed == [123]
 
 
 def test_client_release_download_rejects_same_directory_symlink(
