@@ -203,6 +203,76 @@ def test_client_release_download_returns_validated_bytes_and_fixed_headers(
     assert response.headers["cache-control"] == "private"
 
 
+def test_client_release_download_streams_the_descriptor_that_was_validated(
+    tmp_path: Path, monkeypatch
+):
+    asset_name, _manifest = configure_client_release(tmp_path, monkeypatch)
+    asset_path = tmp_path / asset_name
+    replacement_path = tmp_path / "replacement.tmp"
+    replacement_path.write_bytes(b"attacker-controlled-replacement")
+
+    async def request_then_swap() -> bytes:
+        response = await broker_module.download_client_release(
+            asset_name,
+            DeviceIdentity(token_id="test", label="test"),
+        )
+        try:
+            os.replace(replacement_path, asset_path)
+        except PermissionError:
+            # Windows prevents replacement while the validated descriptor is open.
+            # POSIX permits replacement, but the open descriptor must remain bound
+            # to the validated inode in either case.
+            pass
+        messages = []
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            messages.append(message)
+
+        await response(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": f"/v1/client/releases/download/{asset_name}",
+                "headers": [],
+                "asgi": {"spec_version": "2.4"},
+            },
+            receive,
+            send,
+        )
+        return b"".join(
+            message.get("body", b"")
+            for message in messages
+            if message["type"] == "http.response.body"
+        )
+
+    assert asyncio.run(request_then_swap()) == b"installer"
+
+
+def test_client_release_download_rejects_same_directory_symlink(
+    tmp_path: Path, monkeypatch
+):
+    asset_name, _manifest = configure_client_release(tmp_path, monkeypatch)
+    asset_path = tmp_path / asset_name
+    target = tmp_path / "unlisted-release-payload"
+    target.write_bytes(asset_path.read_bytes())
+    asset_path.unlink()
+    try:
+        asset_path.symlink_to(target.name)
+    except OSError as exc:
+        pytest.skip(f"symlink creation is unavailable: {exc}")
+
+    response = TestClient(broker_module.app).get(
+        f"/v1/client/releases/download/{asset_name}",
+        headers={"Authorization": "Bearer device-token"},
+    )
+
+    assert response.status_code == 503
+    assert b"installer" not in response.content
+
+
 def test_broker_imports_with_side_by_side_health_module_like_server_install():
     root = Path(__file__).resolve().parents[1]
     env = os.environ.copy()

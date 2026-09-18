@@ -17,6 +17,7 @@ import json
 import os
 import re
 import secrets
+import stat
 import tempfile
 import time
 import uuid
@@ -25,12 +26,12 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO, Iterator
 from urllib.parse import urlsplit
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request as FastAPIRequest, Response
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 try:
@@ -57,7 +58,6 @@ try:
         ASSET_PLATFORMS,
         DOWNLOAD_PREFIX,
         RELEASE_VERSION,
-        sha256_file,
         valid_asset_name,
     )
 except ModuleNotFoundError as exc:
@@ -67,7 +67,6 @@ except ModuleNotFoundError as exc:
         ASSET_PLATFORMS,
         DOWNLOAD_PREFIX,
         RELEASE_VERSION,
-        sha256_file,
         valid_asset_name,
     )
 
@@ -1691,7 +1690,60 @@ RELEASE_MEDIA_TYPES = {
 }
 
 
-def load_validated_release_manifest() -> tuple[dict[str, Any], dict[str, Path]]:
+def _open_release_asset(release_dir: Path, name: str) -> BinaryIO:
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    directory_fd: int | None = None
+    asset_fd: int | None = None
+    try:
+        if os.name == "posix":
+            if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+                raise OSError("secure no-follow file opening is unavailable")
+            directory_fd = os.open(
+                release_dir,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+            )
+            asset_fd = os.open(name, flags | os.O_NOFOLLOW, dir_fd=directory_fd)
+        else:
+            candidate = release_dir / name
+            link_stat = candidate.lstat()
+            file_attributes = getattr(link_stat, "st_file_attributes", 0)
+            reparse_point = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+            if stat.S_ISLNK(link_stat.st_mode) or (
+                reparse_point and file_attributes & reparse_point
+            ):
+                raise OSError("release asset must not be a link or reparse point")
+            asset_fd = os.open(candidate, flags)
+        handle = os.fdopen(asset_fd, "rb", closefd=True)
+        asset_fd = None
+        return handle
+    finally:
+        if asset_fd is not None:
+            os.close(asset_fd)
+        if directory_fd is not None:
+            os.close(directory_fd)
+
+
+def _validate_open_release_asset(handle: BinaryIO, asset: dict[str, Any]) -> None:
+    before = os.fstat(handle.fileno())
+    if not stat.S_ISREG(before.st_mode):
+        raise FileNotFoundError
+    digest = hashlib.sha256()
+    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        digest.update(chunk)
+    after = os.fstat(handle.fileno())
+    if (
+        before.st_size != asset["size"]
+        or after.st_size != asset["size"]
+        or before.st_mtime_ns != after.st_mtime_ns
+        or not hmac.compare_digest(digest.hexdigest(), asset["sha256"])
+    ):
+        raise ValueError("release asset integrity mismatch")
+    handle.seek(0)
+
+
+def load_validated_release_manifest(
+    retain_filename: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Path], BinaryIO | None]:
     release_dir = settings.release_dir.resolve()
     manifest_path = release_dir / "latest.json"
     try:
@@ -1713,46 +1765,71 @@ def load_validated_release_manifest() -> tuple[dict[str, Any], dict[str, Path]]:
         raise HTTPException(status_code=503, detail="release metadata is invalid")
 
     candidates: dict[str, Path] = {}
-    for asset in payload["assets"]:
-        if (
-            not isinstance(asset, dict)
-            or set(asset) != {"platform", "name", "size", "sha256", "download_url"}
-        ):
-            raise HTTPException(status_code=503, detail="release metadata is invalid")
-        name = asset.get("name")
-        size = asset.get("size")
-        checksum = asset.get("sha256")
-        if (
-            not valid_asset_name(name)
-            or name in candidates
-            or asset.get("platform") != ASSET_PLATFORMS[name]
-            or type(size) is not int
-            or size < 0
-            or not isinstance(checksum, str)
-            or re.fullmatch(r"[0-9a-f]{64}", checksum) is None
-            or asset.get("download_url") != f"{DOWNLOAD_PREFIX}{name}"
-        ):
-            raise HTTPException(status_code=503, detail="release metadata is invalid")
+    retained_handle = None
+    try:
+        for asset in payload["assets"]:
+            if (
+                not isinstance(asset, dict)
+                or set(asset) != {"platform", "name", "size", "sha256", "download_url"}
+            ):
+                raise HTTPException(status_code=503, detail="release metadata is invalid")
+            name = asset.get("name")
+            size = asset.get("size")
+            checksum = asset.get("sha256")
+            if (
+                not valid_asset_name(name)
+                or name in candidates
+                or asset.get("platform") != ASSET_PLATFORMS[name]
+                or type(size) is not int
+                or size < 0
+                or not isinstance(checksum, str)
+                or re.fullmatch(r"[0-9a-f]{64}", checksum) is None
+                or asset.get("download_url") != f"{DOWNLOAD_PREFIX}{name}"
+            ):
+                raise HTTPException(status_code=503, detail="release metadata is invalid")
 
-        candidate = (release_dir / name).resolve()
-        if candidate.parent != release_dir:
-            raise HTTPException(status_code=503, detail="release metadata is invalid")
-        try:
-            stat = candidate.stat()
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail="release asset not found")
-        except OSError:
-            raise HTTPException(status_code=503, detail="release asset is unavailable")
-        if not candidate.is_file():
-            raise HTTPException(status_code=404, detail="release asset not found")
-        try:
-            actual_checksum = sha256_file(candidate)
-        except OSError:
-            raise HTTPException(status_code=503, detail="release asset is unavailable")
-        if stat.st_size != size or not hmac.compare_digest(actual_checksum, checksum):
-            raise HTTPException(status_code=503, detail="release asset validation failed")
-        candidates[name] = candidate
-    return payload, candidates
+            candidate = release_dir / name
+            try:
+                resolved_candidate = candidate.resolve()
+            except (OSError, RuntimeError):
+                raise HTTPException(status_code=503, detail="release asset is unavailable")
+            if resolved_candidate.parent != release_dir:
+                raise HTTPException(status_code=503, detail="release metadata is invalid")
+            handle = None
+            try:
+                handle = _open_release_asset(release_dir, name)
+                _validate_open_release_asset(handle, asset)
+            except FileNotFoundError:
+                if handle is not None:
+                    handle.close()
+                raise HTTPException(status_code=404, detail="release asset not found")
+            except ValueError:
+                if handle is not None:
+                    handle.close()
+                raise HTTPException(status_code=503, detail="release asset validation failed")
+            except OSError:
+                if handle is not None:
+                    handle.close()
+                raise HTTPException(status_code=503, detail="release asset is unavailable")
+            if name == retain_filename:
+                retained_handle = handle
+                handle = None
+            if handle is not None:
+                handle.close()
+            candidates[name] = candidate
+        return payload, candidates, retained_handle
+    except BaseException:
+        if retained_handle is not None:
+            retained_handle.close()
+        raise
+
+
+def _release_file_chunks(handle: BinaryIO) -> Iterator[bytes]:
+    try:
+        for chunk in iter(lambda: handle.read(64 * 1024), b""):
+            yield chunk
+    finally:
+        handle.close()
 
 
 @app.get("/healthz")
@@ -1765,7 +1842,7 @@ async def latest_client_release(
     response: Response,
     _identity: DeviceIdentity = Depends(require_device),
 ) -> dict[str, Any]:
-    manifest, _candidates = load_validated_release_manifest()
+    manifest, _candidates, _handle = load_validated_release_manifest()
     response.headers["Cache-Control"] = "private, no-cache"
     return manifest
 
@@ -1774,23 +1851,24 @@ async def latest_client_release(
 async def download_client_release(
     filename: str,
     _identity: DeviceIdentity = Depends(require_device),
-) -> FileResponse:
-    manifest, candidates = load_validated_release_manifest()
+) -> StreamingResponse:
+    manifest, candidates, handle = load_validated_release_manifest(filename)
     if not valid_asset_name(filename):
+        if handle is not None:
+            handle.close()
         raise HTTPException(status_code=404, detail="release asset not found")
-    candidate = (settings.release_dir.resolve() / filename).resolve()
-    if candidate.parent != settings.release_dir.resolve():
-        raise HTTPException(status_code=404, detail="release asset not found")
-    if filename not in candidates:
+    if filename not in candidates or handle is None:
+        if handle is not None:
+            handle.close()
         raise HTTPException(status_code=404, detail="release asset not found")
     asset = next(item for item in manifest["assets"] if item["name"] == filename)
-    return FileResponse(
-        candidate,
+    return StreamingResponse(
+        _release_file_chunks(handle),
         media_type=RELEASE_MEDIA_TYPES[filename],
-        filename=filename,
         headers={
             "Cache-Control": "private",
             "Content-Length": str(asset["size"]),
+            "Content-Disposition": f'attachment; filename="{filename}"',
         },
     )
 
