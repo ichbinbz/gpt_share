@@ -84,9 +84,9 @@
     <section id="accounts"></section>
     <div class="section-head"><div><h2>员工 Token 使用量</h2><div class="muted">按服务器签发的员工设备令牌归属；重复上报不会重复计数</div></div><div class="toolbar"><label class="filter"><input id="onlyActive" type="checkbox" checked>只显示有活动记录</label><span class="pill">显示 <strong id="employees">—</strong> / 共 <strong id="employeesTotal">—</strong></span></div></div>
     <section id="employeeUsage"></section>
-    <div class="section-head"><div><h2>用户与 Token 自助</h2><div class="muted">用户名使用姓名拼音；初始密码为工号。用户可前往 <a href="/token" target="_blank" rel="noopener">Token 查询入口</a> 获取自己的令牌。</div></div><span class="pill">用户 <strong id="portalUsersTotal">—</strong></span></div>
+    <div class="section-head"><div><h2>用户与 Token 自助</h2><div class="muted">用户名使用“名字首字母.姓氏”的大写格式，例如 YX.GUO；初始密码为工号。用户可前往 <a href="/token" target="_blank" rel="noopener">Token 查询入口</a> 获取自己的令牌。</div></div><span class="pill">用户 <strong id="portalUsersTotal">—</strong></span></div>
     <form id="userForm" class="user-form">
-      <input id="newUsername" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="用户名，例如 zhangsan" minlength="2" maxlength="64" required>
+      <input id="newUsername" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="用户名，例如 YX.GUO" minlength="3" maxlength="49" pattern="[A-Za-z]{1,16}\.[A-Za-z]{1,32}" required>
       <input id="newEmployeeId" autocomplete="off" placeholder="工号，例如 00123" maxlength="64" required>
       <button id="addUser" type="submit">增加用户</button>
     </form>
@@ -128,7 +128,7 @@
     $('refresh').addEventListener('click',()=>load(true));
     $('onlyActive').addEventListener('change',()=>{if(latestUsage)renderUsage(latestUsage);});
     $('logout').addEventListener('click',()=>{sessionStorage.removeItem(key);$('loginDialog').showModal();});
-    $('userForm').addEventListener('submit',async event=>{event.preventDefault();const token=sessionStorage.getItem(key);if(!token){$('loginDialog').showModal();return;}const button=$('addUser'),box=$('userMessage');button.disabled=true;box.hidden=true;try{const response=await fetch('/v1/admin/users',{method:'POST',cache:'no-store',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({username:$('newUsername').value.trim().toLowerCase(),employee_id:$('newEmployeeId').value.trim()})});const data=await response.json().catch(()=>({}));if(response.status===401){sessionStorage.removeItem(key);throw new Error('管理员令牌已失效，请重新输入。');}if(!response.ok)throw new Error(data.detail||`增加用户失败（HTTP ${response.status}）`);box.className='empty';box.textContent=`已增加用户 ${data.user.username}。用户现在可使用工号登录 Token 查询入口。`;box.hidden=false;$('newUsername').value='';$('newEmployeeId').value='';await load(false);}catch(error){box.className='error';box.textContent=error.message||String(error);box.hidden=false;}finally{button.disabled=false;}});
+    $('userForm').addEventListener('submit',async event=>{event.preventDefault();const token=sessionStorage.getItem(key);if(!token){$('loginDialog').showModal();return;}const button=$('addUser'),box=$('userMessage');button.disabled=true;box.hidden=true;try{const response=await fetch('/v1/admin/users',{method:'POST',cache:'no-store',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({username:$('newUsername').value.trim().toUpperCase(),employee_id:$('newEmployeeId').value.trim()})});const data=await response.json().catch(()=>({}));if(response.status===401){sessionStorage.removeItem(key);throw new Error('管理员令牌已失效，请重新输入。');}if(!response.ok)throw new Error(data.detail||`增加用户失败（HTTP ${response.status}）`);box.className='empty';box.textContent=`已增加用户 ${data.user.username}。用户现在可使用工号登录 Token 查询入口。`;box.hidden=false;$('newUsername').value='';$('newEmployeeId').value='';await load(false);}catch(error){box.className='error';box.textContent=error.message||String(error);box.hidden=false;}finally{button.disabled=false;}});
     load(false);setInterval(()=>{if(sessionStorage.getItem(key))load(false);},30000);
   </script>
 </body>

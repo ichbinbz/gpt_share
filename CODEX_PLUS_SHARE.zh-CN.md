@@ -49,8 +49,9 @@ python scripts/codex_plus_broker.py
 管理员可通过 `http://codex.cws.internal:8765/quota` 打开独立管理页面，或在 CWS 管理后台的
 “系统管理”页面查看账号额度和按员工令牌归属的 Token 使用量。独立页面仅能通过当前内网代理/VLESS 访问。
 
-额度页面同时提供用户管理入口。管理员输入姓名拼音用户名和工号后创建用户；员工访问
-`http://codex.cws.internal:8765/token`，以姓名拼音为用户名、工号为初始密码查询自己的设备令牌。
+额度页面同时提供用户管理入口。管理员输入“名字首字母.姓氏”的大写用户名（例如 `YX.GUO`）
+和工号后创建用户；员工访问 `http://codex.cws.internal:8765/token`，以该用户名、工号为初始密码
+查询自己的设备令牌。
 服务端使用 PBKDF2 保存密码哈希，并通过 `CWS_CODEX_USER_TOKEN_SECRET` 确定性重建设备令牌，
 磁盘上仍只保存设备令牌 SHA-256 哈希。该密钥创建用户后必须保持稳定；未配置时兼容性回退为
 `CWS_CODEX_ADMIN_TOKEN`。查询接口按用户名和来源地址限制连续失败次数。

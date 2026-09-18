@@ -29,10 +29,10 @@
 <body>
   <main>
     <h1>查询设备令牌</h1>
-    <p>用户名为姓名拼音，初始密码为工号。令牌仅在本页显示，请勿发送给他人。</p>
+    <p>用户名采用“名字首字母.姓氏”的大写格式，例如 YX.GUO；初始密码为工号。令牌仅在本页显示，请勿发送给他人。</p>
     <form id="queryForm">
       <label for="username">用户名</label>
-      <input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="例如 zhangsan" required minlength="2" maxlength="64">
+      <input id="username" name="username" autocomplete="username" autocapitalize="characters" spellcheck="false" placeholder="例如 YX.GUO" required minlength="3" maxlength="49" pattern="[A-Za-z]{1,16}\.[A-Za-z]{1,32}">
       <label for="password">密码</label>
       <input id="password" name="password" type="password" autocomplete="current-password" placeholder="请输入工号" required maxlength="128">
       <button id="submit" type="submit">查询我的 Token</button>
@@ -47,7 +47,7 @@
     const text=(tag,cls,value)=>{const el=document.createElement(tag);if(cls)el.className=cls;el.textContent=String(value??'');return el;};
     function showError(value){message.className='error';message.textContent=value;message.hidden=false;}
     function showToken(data){message.className='result';message.replaceChildren(text('strong','',`${data.username} 的设备令牌`),text('div','token',data.device_token));const copy=text('button','copy','复制 Token');copy.type='button';copy.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(data.device_token);copy.textContent='已复制';}catch{copy.textContent='请手动选择并复制';}});message.append(copy);message.hidden=false;}
-    form.addEventListener('submit',async event=>{event.preventDefault();submit.disabled=true;message.hidden=true;const password=document.getElementById('password');try{const response=await fetch('/v1/token/query',{method:'POST',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:document.getElementById('username').value.trim().toLowerCase(),password:password.value})});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(response.status===429?'尝试次数过多，请稍后再试。':response.status===401?'用户名或密码错误。':data.detail||`查询失败（HTTP ${response.status}）`);showToken(data);}catch(error){showError(error.message||String(error));}finally{password.value='';submit.disabled=false;}});
+    form.addEventListener('submit',async event=>{event.preventDefault();submit.disabled=true;message.hidden=true;const password=document.getElementById('password');try{const response=await fetch('/v1/token/query',{method:'POST',cache:'no-store',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:document.getElementById('username').value.trim().toUpperCase(),password:password.value})});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(response.status===429?'尝试次数过多，请稍后再试。':response.status===401?'用户名或密码错误。':data.detail||`查询失败（HTTP ${response.status}）`);showToken(data);}catch(error){showError(error.message||String(error));}finally{password.value='';submit.disabled=false;}});
   </script>
 </body>
 </html>

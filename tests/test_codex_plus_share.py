@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 import scripts.codex_plus_broker as broker_module
 from scripts.codex_plus_broker import (
@@ -74,15 +75,17 @@ def test_usage_score_uses_most_constrained_window():
 def test_portal_user_has_hashed_password_and_recoverable_fixed_device_token():
     registry = {"version": 1, "devices": []}
     secret = "portal-secret-that-is-longer-than-thirty-two-characters"
-    user, token = create_portal_user(registry, "Zhang.San", "00123", secret)
-    assert user["username"] == "zhang.san"
+    user, token = create_portal_user(registry, "yx.guo", "00123", secret)
+    assert user["username"] == "YX.GUO"
     assert user["employee_id"] == "00123"
     assert user["password_hash"].startswith("pbkdf2_sha256$")
     assert verify_user_password("00123", user["password_hash"])
     assert not verify_user_password("00124", user["password_hash"])
-    assert token == derive_user_device_token(secret, "zhang.san", "00123")
+    assert token == derive_user_device_token(secret, "YX.GUO", "00123")
     assert token not in json.dumps(registry)
-    assert find_portal_user(registry, "ZHANG.SAN") is user
+    assert find_portal_user(registry, "yx.guo") is user
+    with pytest.raises(ValueError, match="YX.GUO"):
+        create_portal_user(registry, "guoyuxiang", "00124", secret)
 
 
 def test_portal_pages_expose_admin_create_and_self_service_query_endpoints():
@@ -114,12 +117,12 @@ def test_admin_creates_user_and_user_queries_token_without_plaintext_storage(
     created = client.post(
         "/v1/admin/users",
         headers={"Authorization": "Bearer admin-token-that-is-longer-than-thirty-two-characters"},
-        json={"username": "li.si", "employee_id": "00042"},
+        json={"username": "yx.guo", "employee_id": "00042"},
     )
     assert created.status_code == 200
     queried = client.post(
         "/v1/token/query",
-        json={"username": "LI.SI", "password": "00042"},
+        json={"username": "YX.GUO", "password": "00042"},
     )
     assert queried.status_code == 200, queried.text
     assert queried.headers["cache-control"] == "no-store"
@@ -132,11 +135,11 @@ def test_admin_creates_user_and_user_queries_token_without_plaintext_storage(
     duplicate = client.post(
         "/v1/admin/users",
         headers={"Authorization": "Bearer admin-token-that-is-longer-than-thirty-two-characters"},
-        json={"username": "li.si", "employee_id": "00043"},
+        json={"username": "yx.guo", "employee_id": "00043"},
     )
     assert duplicate.status_code == 409
     assert client.post(
-        "/v1/token/query", json={"username": "li.si", "password": "wrong"}
+        "/v1/token/query", json={"username": "yx.guo", "password": "wrong"}
     ).status_code == 401
 
 

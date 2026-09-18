@@ -55,7 +55,7 @@ USER_INPUT_FIELDS = (
 USAGE_FIELDS = TOKEN_FIELDS + USER_INPUT_FIELDS
 USAGE_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
 BROKER_VERSION = "0.1.6"
-USERNAME_PATTERN = re.compile(r"^[a-z][a-z0-9._-]{1,63}$")
+USERNAME_PATTERN = re.compile(r"^[A-Z]{1,16}\.[A-Z]{1,32}$")
 EMPLOYEE_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 PASSWORD_HASH_ITERATIONS = 310_000
 TOKEN_QUERY_WINDOW_SECONDS = 900
@@ -63,9 +63,9 @@ TOKEN_QUERY_MAX_FAILURES = 8
 
 
 def normalize_username(value: str) -> str:
-    username = value.strip().lower()
+    username = value.strip().upper()
     if not USERNAME_PATTERN.fullmatch(username):
-        raise ValueError("username must be 2-64 lowercase pinyin characters")
+        raise ValueError("username must use the uppercase initials.surname format, for example YX.GUO")
     return username
 
 
@@ -134,7 +134,7 @@ def create_portal_user(
     for device in devices:
         if not isinstance(device, dict):
             continue
-        if device.get("username") == normalized_username:
+        if str(device.get("username") or "").upper() == normalized_username:
             raise ValueError("username already exists")
         if device.get("employee_id") == normalized_employee_id:
             raise ValueError("employee id already exists")
@@ -162,7 +162,9 @@ def find_portal_user(registry: dict[str, Any], username: str) -> dict[str, Any] 
     try:
         normalized = normalize_username(username)
     except ValueError:
-        return None
+        # Keep already-created legacy usernames queryable while enforcing the
+        # new initials.surname format for all newly created users.
+        normalized = username.strip().upper()
     devices = registry.get("devices") if isinstance(registry, dict) else None
     if not isinstance(devices, list):
         return None
@@ -170,7 +172,7 @@ def find_portal_user(registry: dict[str, Any], username: str) -> dict[str, Any] 
         if (
             isinstance(device, dict)
             and device.get("portal_user") is True
-            and device.get("username") == normalized
+            and str(device.get("username") or "").upper() == normalized
         ):
             return device
     return None
@@ -1040,7 +1042,7 @@ def token_query_key(request: FastAPIRequest, username: str) -> str:
         # of a literal IP address. Authentication must still work, while the
         # username portion keeps the fallback rate-limit key specific.
         source = "unknown"
-    return f"{source}:{username.strip().lower()[:64]}"
+    return f"{source}:{username.strip().upper()[:64]}"
 
 
 async def enforce_token_query_limit(key: str) -> None:
