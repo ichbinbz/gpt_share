@@ -25,6 +25,25 @@ def test_server_release_archive_contains_only_deployment_material(tmp_path: Path
     assert modes[str(PurePosixPath(ARCHIVE_ROOT, "install-server.sh"))] == 0o755
     assert modes[str(PurePosixPath(ARCHIVE_ROOT, "codex_plus_broker.py"))] == 0o755
     assert modes[str(PurePosixPath(ARCHIVE_ROOT, "codex_model_health.py"))] == 0o755
+    assert modes[str(PurePosixPath(ARCHIVE_ROOT, "codex_release_manifest.py"))] == 0o755
     assert modes[str(PurePosixPath(ARCHIVE_ROOT, "README-Server.txt"))] == 0o644
     assert b"\r\n" not in installer
     assert installer.startswith(b"#!/usr/bin/env bash\n")
+
+
+def test_server_installer_preserves_release_assets_and_manifest(tmp_path: Path):
+    root = Path(__file__).resolve().parents[1]
+    output = tmp_path / "server.tar.gz"
+    build(root, output)
+
+    with tarfile.open(output, "r:gz") as archive:
+        installer = archive.extractfile(
+            str(PurePosixPath(ARCHIVE_ROOT, "install-server.sh"))
+        ).read().decode("utf-8")
+        environment = archive.extractfile(
+            str(PurePosixPath(ARCHIVE_ROOT, "cws-codex-broker.env.example"))
+        ).read().decode("utf-8")
+
+    assert 'install -d -m 0755 "${STATE_DIR}/releases"' in installer
+    assert "latest.json" not in installer
+    assert "CWS_CODEX_RELEASE_DIR=/var/lib/cws-codex/releases" in environment

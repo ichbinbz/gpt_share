@@ -30,7 +30,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request as FastAPIRequest, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
 try:
@@ -52,6 +52,25 @@ except ModuleNotFoundError as exc:
         merge_model_probe,
     )
 
+try:
+    from scripts.codex_release_manifest import (
+        ASSET_PLATFORMS,
+        DOWNLOAD_PREFIX,
+        RELEASE_VERSION,
+        sha256_file,
+        valid_asset_name,
+    )
+except ModuleNotFoundError as exc:
+    if exc.name != "scripts":
+        raise
+    from codex_release_manifest import (  # type: ignore[no-redef]
+        ASSET_PLATFORMS,
+        DOWNLOAD_PREFIX,
+        RELEASE_VERSION,
+        sha256_file,
+        valid_asset_name,
+    )
+
 
 OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
 OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -63,6 +82,7 @@ DEFAULT_PRIMARY_AUTH = "/var/lib/cws-codex/auth.json"
 DEFAULT_ACCOUNTS_DIR = "/var/lib/cws-codex/accounts"
 DEFAULT_STATE_FILE = "/var/lib/cws-codex/broker-state.json"
 DEFAULT_USAGE_STATE_FILE = "/var/lib/cws-codex/device-usage.json"
+DEFAULT_RELEASE_DIR = "/var/lib/cws-codex/releases"
 TOKEN_FIELDS = (
     "input_tokens",
     "cached_input_tokens",
@@ -323,6 +343,7 @@ class BrokerSettings:
     state_file: Path
     usage_state_file: Path
     device_token_file: Path
+    release_dir: Path
     device_tokens: tuple[str, ...]
     admin_token: str | None
     user_token_secret: str | None
@@ -357,6 +378,7 @@ class BrokerSettings:
             device_token_file=Path(
                 os.getenv("CWS_CODEX_DEVICE_TOKEN_FILE", "/var/lib/cws-codex/device-tokens.json")
             ),
+            release_dir=Path(os.getenv("CWS_CODEX_RELEASE_DIR", DEFAULT_RELEASE_DIR)),
             device_tokens=device_tokens,
             admin_token=os.getenv("CWS_CODEX_ADMIN_TOKEN") or None,
             user_token_secret=(
@@ -1660,9 +1682,117 @@ async def require_admin(authorization: str | None = Header(default=None)) -> Non
         raise HTTPException(status_code=401, detail="invalid admin token")
 
 
+RELEASE_MEDIA_TYPES = {
+    "CWS-Codex-Setup-v0.1.7.exe": "application/vnd.microsoft.portable-executable",
+    "CWS-Codex-Release-v0.1.7.zip": "application/zip",
+    "CWS-Codex-Windows-v0.1.7.zip": "application/zip",
+    "CWS-Codex-Linux-v0.1.7.tar.gz": "application/gzip",
+    "CWS-Codex-Server-v0.1.7.tar.gz": "application/gzip",
+}
+
+
+def load_validated_release_manifest() -> tuple[dict[str, Any], dict[str, Path]]:
+    release_dir = settings.release_dir.resolve()
+    manifest_path = release_dir / "latest.json"
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="release not found")
+    except (json.JSONDecodeError, UnicodeError, OSError):
+        raise HTTPException(status_code=503, detail="release metadata is unavailable")
+
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"release_version", "published_at", "assets"}
+        or payload.get("release_version") != RELEASE_VERSION
+        or not isinstance(payload.get("published_at"), str)
+        or not payload["published_at"]
+        or not isinstance(payload.get("assets"), list)
+        or not payload["assets"]
+    ):
+        raise HTTPException(status_code=503, detail="release metadata is invalid")
+
+    candidates: dict[str, Path] = {}
+    for asset in payload["assets"]:
+        if (
+            not isinstance(asset, dict)
+            or set(asset) != {"platform", "name", "size", "sha256", "download_url"}
+        ):
+            raise HTTPException(status_code=503, detail="release metadata is invalid")
+        name = asset.get("name")
+        size = asset.get("size")
+        checksum = asset.get("sha256")
+        if (
+            not valid_asset_name(name)
+            or name in candidates
+            or asset.get("platform") != ASSET_PLATFORMS[name]
+            or type(size) is not int
+            or size < 0
+            or not isinstance(checksum, str)
+            or re.fullmatch(r"[0-9a-f]{64}", checksum) is None
+            or asset.get("download_url") != f"{DOWNLOAD_PREFIX}{name}"
+        ):
+            raise HTTPException(status_code=503, detail="release metadata is invalid")
+
+        candidate = (release_dir / name).resolve()
+        if candidate.parent != release_dir:
+            raise HTTPException(status_code=503, detail="release metadata is invalid")
+        try:
+            stat = candidate.stat()
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="release asset not found")
+        except OSError:
+            raise HTTPException(status_code=503, detail="release asset is unavailable")
+        if not candidate.is_file():
+            raise HTTPException(status_code=404, detail="release asset not found")
+        try:
+            actual_checksum = sha256_file(candidate)
+        except OSError:
+            raise HTTPException(status_code=503, detail="release asset is unavailable")
+        if stat.st_size != size or not hmac.compare_digest(actual_checksum, checksum):
+            raise HTTPException(status_code=503, detail="release asset validation failed")
+        candidates[name] = candidate
+    return payload, candidates
+
+
 @app.get("/healthz")
 async def healthz() -> dict[str, Any]:
     return {"ok": True, "accounts": len(broker.accounts), "version": BROKER_VERSION}
+
+
+@app.get("/v1/client/releases/latest")
+async def latest_client_release(
+    response: Response,
+    _identity: DeviceIdentity = Depends(require_device),
+) -> dict[str, Any]:
+    manifest, _candidates = load_validated_release_manifest()
+    response.headers["Cache-Control"] = "private, no-cache"
+    return manifest
+
+
+@app.get("/v1/client/releases/download/{filename}")
+async def download_client_release(
+    filename: str,
+    _identity: DeviceIdentity = Depends(require_device),
+) -> FileResponse:
+    manifest, candidates = load_validated_release_manifest()
+    if not valid_asset_name(filename):
+        raise HTTPException(status_code=404, detail="release asset not found")
+    candidate = (settings.release_dir.resolve() / filename).resolve()
+    if candidate.parent != settings.release_dir.resolve():
+        raise HTTPException(status_code=404, detail="release asset not found")
+    if filename not in candidates:
+        raise HTTPException(status_code=404, detail="release asset not found")
+    asset = next(item for item in manifest["assets"] if item["name"] == filename)
+    return FileResponse(
+        candidate,
+        media_type=RELEASE_MEDIA_TYPES[filename],
+        filename=filename,
+        headers={
+            "Cache-Control": "private",
+            "Content-Length": str(asset["size"]),
+        },
+    )
 
 
 @app.get("/quota", response_class=HTMLResponse, include_in_schema=False)

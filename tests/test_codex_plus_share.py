@@ -59,6 +59,150 @@ def probe_account(tmp_path: Path, payload: dict | None = None) -> AccountRecord:
     return AccountRecord("account-test", auth_path)
 
 
+def client_release_manifest(asset_name: str, payload: bytes) -> dict:
+    return {
+        "release_version": "0.1.7",
+        "published_at": "2026-09-18T00:00:00Z",
+        "assets": [
+            {
+                "platform": "windows-installer",
+                "name": asset_name,
+                "size": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "download_url": f"/v1/client/releases/download/{asset_name}",
+            }
+        ],
+    }
+
+
+def configure_client_release(tmp_path: Path, monkeypatch, payload: bytes = b"installer"):
+    asset_name = "CWS-Codex-Setup-v0.1.7.exe"
+    (tmp_path / asset_name).write_bytes(payload)
+    manifest = client_release_manifest(asset_name, payload)
+    (tmp_path / "latest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setattr(
+        broker_module,
+        "settings",
+        SimpleNamespace(
+            release_dir=tmp_path,
+            device_tokens=("device-token",),
+            device_token_file=tmp_path / "device-tokens.json",
+        ),
+    )
+    return asset_name, manifest
+
+
+def test_client_release_routes_require_device_authentication(tmp_path: Path, monkeypatch):
+    asset_name, _manifest = configure_client_release(tmp_path, monkeypatch)
+    client = TestClient(broker_module.app)
+
+    assert client.get("/v1/client/releases/latest").status_code == 401
+    assert client.get(f"/v1/client/releases/download/{asset_name}").status_code == 401
+
+
+def test_client_release_latest_returns_revalidated_manifest(tmp_path: Path, monkeypatch):
+    _asset_name, manifest = configure_client_release(tmp_path, monkeypatch)
+
+    response = TestClient(broker_module.app).get(
+        "/v1/client/releases/latest",
+        headers={"Authorization": "Bearer device-token"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == manifest
+    assert response.headers["cache-control"] == "private, no-cache"
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "auth.json",
+        "CWS-Codex-Release-v0.1.7.zip",
+        "..%5Cauth.json",
+        "%2e%2e%2fauth.json",
+    ],
+)
+def test_client_release_download_rejects_traversal_and_unlisted_files(
+    tmp_path: Path, monkeypatch, filename: str
+):
+    configure_client_release(tmp_path, monkeypatch)
+    (tmp_path / "auth.json").write_text("secret", encoding="utf-8")
+
+    response = TestClient(broker_module.app).get(
+        f"/v1/client/releases/download/{filename}",
+        headers={"Authorization": "Bearer device-token"},
+    )
+
+    assert response.status_code == 404
+    assert b"secret" not in response.content
+
+
+@pytest.mark.parametrize("tamper", ["size", "sha256", "metadata", "unexpected"])
+def test_client_release_rejects_tampered_manifest_or_asset(
+    tmp_path: Path, monkeypatch, tamper: str
+):
+    asset_name, manifest = configure_client_release(tmp_path, monkeypatch)
+    if tamper == "size":
+        manifest["assets"][0]["size"] += 1
+    elif tamper == "sha256":
+        manifest["assets"][0]["sha256"] = "0" * 64
+    elif tamper == "metadata":
+        manifest["assets"][0]["download_url"] = "/v1/client/releases/download/auth.json"
+    else:
+        manifest["private"] = "must-not-be-reflected"
+    (tmp_path / "latest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    client = TestClient(broker_module.app)
+    latest = client.get(
+        "/v1/client/releases/latest",
+        headers={"Authorization": "Bearer device-token"},
+    )
+    download = client.get(
+        f"/v1/client/releases/download/{asset_name}",
+        headers={"Authorization": "Bearer device-token"},
+    )
+
+    assert latest.status_code == 503
+    assert download.status_code == 503
+    assert b"installer" not in download.content
+    assert b"must-not-be-reflected" not in latest.content
+
+
+def test_client_release_missing_manifest_or_asset_returns_404(tmp_path: Path, monkeypatch):
+    asset_name, _manifest = configure_client_release(tmp_path, monkeypatch)
+    client = TestClient(broker_module.app)
+    (tmp_path / asset_name).unlink()
+
+    assert client.get(
+        "/v1/client/releases/latest",
+        headers={"Authorization": "Bearer device-token"},
+    ).status_code == 404
+    assert client.get(
+        f"/v1/client/releases/download/{asset_name}",
+        headers={"Authorization": "Bearer device-token"},
+    ).status_code == 404
+
+
+def test_client_release_download_returns_validated_bytes_and_fixed_headers(
+    tmp_path: Path, monkeypatch
+):
+    asset_name, _manifest = configure_client_release(tmp_path, monkeypatch)
+
+    response = TestClient(broker_module.app).get(
+        f"/v1/client/releases/download/{asset_name}",
+        headers={"Authorization": "Bearer device-token"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.content == b"installer"
+    assert response.headers["content-type"] == "application/vnd.microsoft.portable-executable"
+    assert response.headers["content-length"] == "9"
+    assert response.headers["content-disposition"] == (
+        'attachment; filename="CWS-Codex-Setup-v0.1.7.exe"'
+    )
+    assert response.headers["cache-control"] == "private"
+
+
 def test_broker_imports_with_side_by_side_health_module_like_server_install():
     root = Path(__file__).resolve().parents[1]
     env = os.environ.copy()

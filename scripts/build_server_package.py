@@ -17,6 +17,7 @@ PACKAGE_FILES = {
     Path("server-package/requirements-server.txt"): Path("requirements-server.txt"),
     Path("scripts/codex_plus_broker.py"): Path("codex_plus_broker.py"),
     Path("scripts/codex_model_health.py"): Path("codex_model_health.py"),
+    Path("scripts/codex_release_manifest.py"): Path("codex_release_manifest.py"),
     Path("scripts/codex_device_tokens.py"): Path("codex_device_tokens.py"),
     Path("scripts/import_employee_tokens_xlsx.py"): Path("import_employee_tokens_xlsx.py"),
     Path("scripts/codex_quota_dashboard.html"): Path("codex_quota_dashboard.html"),
