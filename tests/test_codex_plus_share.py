@@ -1,15 +1,20 @@
 import base64
 import asyncio
 import json
+import os
+import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import httpx
 from fastapi.testclient import TestClient
 import scripts.codex_plus_broker as broker_module
 from scripts.codex_plus_broker import (
     AccountRecord,
+    BrokerSettings,
     DailySessionUsage,
     DeviceIdentity,
     DeviceUsageStore,
@@ -27,6 +32,7 @@ from scripts.codex_plus_broker import (
     usage_score,
     verify_user_password,
 )
+from scripts.codex_model_health import ModelHealthStore
 from scripts.codex_plus_sync import DEFAULT_BROKER_URL, DEFAULT_PROXY_URL, codex_auth_payload
 from scripts.codex_plus_sync import request_lease
 
@@ -34,6 +40,446 @@ from scripts.codex_plus_sync import request_lease
 def jwt(payload: dict) -> str:
     encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
     return f"e30.{encoded}.sig"
+
+
+def probe_auth_payload(access_token: str | None = None) -> dict:
+    return {
+        "tokens": {
+            "access_token": access_token or jwt({"exp": 2_100_000_000}),
+            "refresh_token": "refresh-test",
+            "account_id": "acct-test",
+        }
+    }
+
+
+def probe_account(tmp_path: Path, payload: dict | None = None) -> AccountRecord:
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(json.dumps(payload or probe_auth_payload()), encoding="utf-8")
+    return AccountRecord("account-test", auth_path)
+
+
+def test_broker_imports_with_side_by_side_health_module_like_server_install():
+    root = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(
+        entry
+        for entry in env.get("PYTHONPATH", "").split(os.pathsep)
+        if entry and Path(entry).resolve() != root
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", "import codex_plus_broker"],
+        cwd=root / "scripts",
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_model_probe_settings_have_safe_defaults(monkeypatch):
+    for name in (
+        "CWS_CODEX_MODEL_PROBE_INTERVAL_SECONDS",
+        "CWS_CODEX_MODEL_COOLDOWN_SECONDS",
+        "CWS_CODEX_MODEL_PROBE_CONCURRENCY",
+        "CWS_CODEX_MODEL_PROBE_TIMEOUT_SECONDS",
+        "CWS_CODEX_MODEL_FALLBACKS",
+        "CWS_CODEX_MODEL_HEALTH_FILE",
+        "CWS_CODEX_MODELS_URL",
+        "CWS_CODEX_RESPONSES_URL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    settings = BrokerSettings.from_env()
+
+    assert settings.model_probe_interval_seconds == 900
+    assert settings.model_cooldown_seconds == 1800
+    assert settings.model_probe_concurrency == 2
+    assert settings.model_probe_timeout_seconds == 45
+    assert settings.model_health_file == Path("/var/lib/cws-codex/model-health.json")
+    assert settings.codex_models_url == "https://chatgpt.com/backend-api/codex/models"
+    assert settings.codex_responses_url == "https://chatgpt.com/backend-api/codex/responses"
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("CWS_CODEX_MODEL_PROBE_INTERVAL_SECONDS", "59"),
+        ("CWS_CODEX_MODEL_COOLDOWN_SECONDS", "59"),
+        ("CWS_CODEX_MODEL_PROBE_CONCURRENCY", "0"),
+        ("CWS_CODEX_MODEL_PROBE_CONCURRENCY", "9"),
+        ("CWS_CODEX_MODEL_PROBE_TIMEOUT_SECONDS", "4"),
+        ("CWS_CODEX_MODEL_PROBE_TIMEOUT_SECONDS", "121"),
+    ],
+)
+def test_model_probe_settings_reject_out_of_range_values(monkeypatch, name: str, value: str):
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError, match=name):
+        BrokerSettings.from_env()
+
+
+@pytest.mark.parametrize("name", ["CWS_CODEX_MODELS_URL", "CWS_CODEX_RESPONSES_URL"])
+def test_model_probe_settings_reject_insecure_remote_endpoints(monkeypatch, name: str):
+    monkeypatch.setenv(name, "http://example.test/backend-api/codex")
+    with pytest.raises(ValueError, match="HTTPS"):
+        BrokerSettings.from_env()
+
+    monkeypatch.setenv(name, "http://127.0.0.1:8080/test")
+    assert getattr(
+        BrokerSettings.from_env(),
+        "codex_models_url" if name.endswith("MODELS_URL") else "codex_responses_url",
+    ).startswith("http://127.0.0.1:8080/")
+
+
+def test_discover_models_uses_oauth_headers_and_filters_codex_text_models(tmp_path: Path):
+    account = probe_account(tmp_path)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/backend-api/codex/models")
+        assert request.headers["authorization"].startswith("Bearer ")
+        assert request.headers["chatgpt-account-id"] == "acct-test"
+        return httpx.Response(
+            200,
+            json={
+                "models": [
+                    {"slug": "gpt-text", "supports_text": True, "available": True},
+                    {"slug": "gpt-image", "supports_text": False, "available": True},
+                    {"slug": "gpt-off", "supports_text": True, "available": False},
+                ]
+            },
+        )
+
+    async def run() -> list[str]:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await account.discover_models(client, probe_auth_payload(), timeout=5)
+
+    assert asyncio.run(run()) == ["gpt-text"]
+
+
+def test_probe_model_sends_fixed_minimal_non_user_request(tmp_path: Path):
+    account = probe_account(tmp_path)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert request.url.path.endswith("/backend-api/codex/responses")
+        assert request.headers["authorization"].startswith("Bearer ")
+        assert request.headers["chatgpt-account-id"] == "acct-test"
+        assert body["model"] == "gpt-text"
+        assert body["store"] is False
+        assert "tools" not in body
+        assert body["input"] == "Reply with OK."
+        assert "company" not in request.content.decode().lower()
+        return httpx.Response(200, json={"id": "resp-test", "status": "completed"})
+
+    async def run() -> dict:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await account.probe_model(client, probe_auth_payload(), "gpt-text", timeout=5)
+
+    assert asyncio.run(run()) == {
+        "status": "available",
+        "available": True,
+        "http_status": 200,
+    }
+
+
+def test_probe_model_classifies_json_server_overloaded(tmp_path: Path):
+    account = probe_account(tmp_path)
+    attempts = 0
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(
+            503,
+            json={
+                "error": {
+                    "code": "server_overloaded",
+                    "message": "Selected model is at capacity. Please try a different model.",
+                    "type": "server_error",
+                    "param": None,
+                }
+            },
+        )
+
+    async def run() -> dict:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await account.probe_model(client, probe_auth_payload(), "gpt-text", timeout=5)
+
+    result = asyncio.run(run())
+    assert result == {
+        "status": "capacity",
+        "available": False,
+        "http_status": 503,
+        "error_code": "server_overloaded",
+        "error_message": "Selected model is at capacity. Please try a different model.",
+    }
+    assert attempts == 1
+    assert "response_body" not in result
+
+
+def test_probe_model_classifies_sse_error_event(tmp_path: Path):
+    account = probe_account(tmp_path)
+    event = {
+        "type": "error",
+        "error": {
+            "code": "rate_limit_exceeded",
+            "message": "Usage limit reached.",
+            "type": "rate_limit_error",
+            "param": None,
+        },
+    }
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=f"event: error\ndata: {json.dumps(event)}\n\n",
+        )
+
+    async def run() -> dict:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await account.probe_model(client, probe_auth_payload(), "gpt-text", timeout=5)
+
+    result = asyncio.run(run())
+    assert result["status"] == "quota"
+    assert result["available"] is False
+    assert result["error_code"] == "rate_limit_exceeded"
+    assert "response_body" not in result
+
+
+def test_probe_model_refreshes_once_after_401_and_retries(tmp_path: Path):
+    old_access = jwt({"exp": 2_100_000_000})
+    new_access = jwt({"exp": 2_200_000_000})
+    payload = probe_auth_payload(old_access)
+    account = probe_account(tmp_path, payload)
+    attempts = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth/token":
+            return httpx.Response(
+                200,
+                json={"access_token": new_access, "refresh_token": "new-refresh"},
+            )
+        attempts.append(request.headers["authorization"])
+        if len(attempts) == 1:
+            return httpx.Response(
+                401,
+                json={"error": {"code": "token_expired", "message": "Unauthorized"}},
+            )
+        return httpx.Response(200, json={"id": "resp-test", "status": "completed"})
+
+    async def run() -> dict:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await account.probe_model(client, payload, "gpt-text", timeout=5)
+
+    result = asyncio.run(run())
+    assert result["status"] == "available"
+    assert attempts == [f"Bearer {old_access}", f"Bearer {new_access}"]
+    stored = json.loads(account.auth_path.read_text(encoding="utf-8"))
+    assert stored["last_refresh_reason"] == "model_probe_unauthorized"
+
+
+def test_probe_model_timeout_is_a_transient_probe_error(tmp_path: Path):
+    account = probe_account(tmp_path)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    async def run() -> dict:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await account.probe_model(client, probe_auth_payload(), "gpt-text", timeout=5)
+
+    assert asyncio.run(run()) == {
+        "status": "probe_error",
+        "available": None,
+        "error_code": "timeout",
+        "error_message": "request timed out",
+    }
+
+
+def probe_broker(tmp_path: Path, accounts: dict, **setting_overrides) -> TokenBroker:
+    broker = TokenBroker.__new__(TokenBroker)
+    broker.client = object()
+    broker.owns_client = False
+    broker.accounts = accounts
+    broker.model_health_store = ModelHealthStore(tmp_path / "model-health.json")
+    broker.probe_lock = asyncio.Lock()
+    defaults = {
+        "refresh_window_seconds": 900,
+        "model_probe_timeout_seconds": 5,
+        "model_probe_concurrency": 2,
+        "model_cooldown_seconds": 1800,
+        "model_probe_interval_seconds": 900,
+        "model_fallbacks": ("fallback-one", "fallback-two"),
+    }
+    defaults.update(setting_overrides)
+    broker.settings = SimpleNamespace(**defaults)
+    return broker
+
+
+class FakeProbeAccount:
+    def __init__(self, models=("gpt-text",), *, discovery_error=False, result=None):
+        self.models = list(models)
+        self.discovery_error = discovery_error
+        self.result = result or {"status": "available", "available": True, "http_status": 200}
+        self.probed_models = []
+        self.active_counter = None
+
+    async def ensure_fresh(self, _client, _refresh_window):
+        if self.active_counter is not None:
+            self.active_counter["active"] += 1
+            self.active_counter["peak"] = max(
+                self.active_counter["peak"], self.active_counter["active"]
+            )
+        return probe_auth_payload()
+
+    async def discover_models(self, _client, _payload, _timeout):
+        if self.discovery_error:
+            raise RuntimeError("discovery unavailable")
+        return self.models
+
+    async def probe_model(self, _client, _payload, model, _timeout):
+        self.probed_models.append(model)
+        await asyncio.sleep(0.01)
+        if self.active_counter is not None and len(self.probed_models) == len(self.models):
+            self.active_counter["active"] -= 1
+        return dict(self.result)
+
+
+def test_probe_models_once_limits_seven_accounts_to_configured_concurrency(tmp_path: Path):
+    counter = {"active": 0, "peak": 0}
+    accounts = {f"account-{index}": FakeProbeAccount() for index in range(7)}
+    for account in accounts.values():
+        account.active_counter = counter
+    broker = probe_broker(tmp_path, accounts, model_probe_concurrency=2)
+
+    state = asyncio.run(broker.probe_models_once(now=2_000.0))
+
+    assert counter["peak"] == 2
+    assert len(state["accounts"]) == 7
+    assert all(record["available"] is True for record in state["accounts"].values())
+
+
+def test_probe_models_once_uses_all_fallback_models_when_discovery_fails(tmp_path: Path):
+    account = FakeProbeAccount(discovery_error=True)
+    account.models = ["fallback-one", "fallback-two"]
+    broker = probe_broker(tmp_path, {"account-test": account})
+
+    state = asyncio.run(broker.probe_models_once(now=2_000.0))
+
+    record = state["accounts"]["account-test"]
+    assert account.probed_models == ["fallback-one", "fallback-two"]
+    assert record["discovery_source"] == "fallback"
+    assert sorted(record["models"]) == ["fallback-one", "fallback-two"]
+
+
+def test_probe_models_once_preserves_recent_known_good_on_transient_error(tmp_path: Path):
+    store = ModelHealthStore(tmp_path / "model-health.json")
+    store.replace_account(
+        "account-test",
+        {
+            "available": True,
+            "models": {
+                "gpt-text": {
+                    "status": "available",
+                    "available": True,
+                    "last_probe_at": 1_900.0,
+                }
+            },
+        },
+    )
+    account = FakeProbeAccount(
+        result={
+            "status": "probe_error",
+            "available": None,
+            "error_code": "timeout",
+            "error_message": "request timed out",
+        }
+    )
+    broker = probe_broker(tmp_path, {"account-test": account})
+
+    state = asyncio.run(broker.probe_models_once(now=2_000.0))
+
+    model = state["accounts"]["account-test"]["models"]["gpt-text"]
+    assert model["status"] == "available"
+    assert model["available"] is True
+    assert model["last_probe_error_at"] == 2_000.0
+
+
+def test_probe_models_once_does_not_overlap_slow_rounds(tmp_path: Path):
+    counter = {"active": 0, "peak": 0}
+    account = FakeProbeAccount()
+    account.active_counter = counter
+    broker = probe_broker(tmp_path, {"account-test": account}, model_probe_concurrency=1)
+
+    async def run():
+        await asyncio.gather(
+            broker.probe_models_once(now=2_000.0),
+            broker.probe_models_once(now=2_001.0),
+        )
+
+    asyncio.run(run())
+    assert counter["peak"] == 1
+
+
+def test_probe_loop_runs_immediately_and_is_cancellable(tmp_path: Path):
+    broker = probe_broker(tmp_path, {})
+    started = asyncio.Event()
+    calls = 0
+
+    async def probe_once(now=None):
+        nonlocal calls
+        calls += 1
+        started.set()
+        return {"version": 1, "accounts": {}}
+
+    broker.probe_models_once = probe_once
+
+    async def run():
+        task = asyncio.create_task(broker.model_probe_loop())
+        await asyncio.wait_for(started.wait(), timeout=1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run())
+    assert calls == 1
+
+
+def test_lifespan_starts_probe_loop_then_cancels_it_and_closes_owned_client(monkeypatch):
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+
+    class Client:
+        closed = False
+
+        async def aclose(self):
+            self.closed = True
+
+    class Broker:
+        owns_client = True
+        client = Client()
+
+        async def model_probe_loop(self):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
+
+    fake_broker = Broker()
+    monkeypatch.setattr(broker_module, "broker", fake_broker)
+
+    async def run():
+        application = SimpleNamespace(state=SimpleNamespace())
+        async with broker_module.lifespan(application):
+            await asyncio.wait_for(started.wait(), timeout=1)
+            assert fake_broker.client.closed is False
+        assert stopped.is_set()
+        assert fake_broker.client.closed is True
+
+    asyncio.run(run())
 
 
 def test_decodes_official_chatgpt_claims():

@@ -21,20 +21,44 @@ import tempfile
 import time
 import uuid
 from collections import Counter
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request as FastAPIRequest, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+try:
+    from scripts.codex_model_health import (
+        ModelHealthStore,
+        account_probe_available,
+        classify_probe_failure,
+        filter_codex_text_models,
+        merge_model_probe,
+    )
+except ModuleNotFoundError as exc:
+    if exc.name != "scripts":
+        raise
+    from codex_model_health import (  # type: ignore[no-redef]
+        ModelHealthStore,
+        account_probe_available,
+        classify_probe_failure,
+        filter_codex_text_models,
+        merge_model_probe,
+    )
+
 
 OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
 OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CHATGPT_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
+DEFAULT_CODEX_MODELS_URL = "https://chatgpt.com/backend-api/codex/models"
+DEFAULT_CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses"
+MODEL_PROBE_INPUT = "Reply with OK."
 DEFAULT_PRIMARY_AUTH = "/var/lib/cws-codex/auth.json"
 DEFAULT_ACCOUNTS_DIR = "/var/lib/cws-codex/accounts"
 DEFAULT_STATE_FILE = "/var/lib/cws-codex/broker-state.json"
@@ -60,6 +84,32 @@ EMPLOYEE_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 PASSWORD_HASH_ITERATIONS = 310_000
 TOKEN_QUERY_WINDOW_SECONDS = 900
 TOKEN_QUERY_MAX_FAILURES = 8
+
+
+def _validated_env_int(name: str, default: int, minimum: int, maximum: int | None = None) -> int:
+    raw = os.getenv(name, str(default))
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+    if value < minimum or (maximum is not None and value > maximum):
+        expected = f"between {minimum} and {maximum}" if maximum is not None else f"at least {minimum}"
+        raise ValueError(f"{name} must be {expected}")
+    return value
+
+
+def _validated_endpoint(name: str, default: str) -> str:
+    value = os.getenv(name, default).strip()
+    parsed = urlsplit(value)
+    is_https = parsed.scheme == "https" and bool(parsed.netloc)
+    is_loopback_http = (
+        parsed.scheme == "http"
+        and parsed.hostname == "127.0.0.1"
+        and bool(parsed.netloc)
+    )
+    if not (is_https or is_loopback_http):
+        raise ValueError(f"{name} must use HTTPS (loopback http://127.0.0.1 is allowed for tests)")
+    return value
 
 
 def normalize_username(value: str) -> str:
@@ -280,11 +330,23 @@ class BrokerSettings:
     lease_rotation_seconds: int
     refresh_window_seconds: int
     usage_cache_seconds: int
+    model_probe_interval_seconds: int
+    model_cooldown_seconds: int
+    model_probe_concurrency: int
+    model_probe_timeout_seconds: int
+    model_health_file: Path
+    model_fallbacks: tuple[str, ...]
+    codex_models_url: str
+    codex_responses_url: str
 
     @classmethod
     def from_env(cls) -> "BrokerSettings":
         raw_tokens = os.getenv("CWS_CODEX_DEVICE_TOKENS", "")
         device_tokens = tuple(token.strip() for token in raw_tokens.split(",") if token.strip())
+        raw_fallbacks = os.getenv("CWS_CODEX_MODEL_FALLBACKS", "")
+        model_fallbacks = tuple(
+            dict.fromkeys(model.strip() for model in raw_fallbacks.split(",") if model.strip())
+        )
         return cls(
             primary_auth=Path(os.getenv("CWS_CODEX_PRIMARY_AUTH", DEFAULT_PRIMARY_AUTH)),
             accounts_dir=Path(os.getenv("CWS_CODEX_ACCOUNTS_DIR", DEFAULT_ACCOUNTS_DIR)),
@@ -308,6 +370,28 @@ class BrokerSettings:
             ),
             refresh_window_seconds=int(os.getenv("CWS_CODEX_REFRESH_WINDOW_SECONDS", "900")),
             usage_cache_seconds=int(os.getenv("CWS_CODEX_USAGE_CACHE_SECONDS", "30")),
+            model_probe_interval_seconds=_validated_env_int(
+                "CWS_CODEX_MODEL_PROBE_INTERVAL_SECONDS", 900, 60
+            ),
+            model_cooldown_seconds=_validated_env_int(
+                "CWS_CODEX_MODEL_COOLDOWN_SECONDS", 1800, 60
+            ),
+            model_probe_concurrency=_validated_env_int(
+                "CWS_CODEX_MODEL_PROBE_CONCURRENCY", 2, 1, 8
+            ),
+            model_probe_timeout_seconds=_validated_env_int(
+                "CWS_CODEX_MODEL_PROBE_TIMEOUT_SECONDS", 45, 5, 120
+            ),
+            model_health_file=Path(
+                os.getenv("CWS_CODEX_MODEL_HEALTH_FILE", "/var/lib/cws-codex/model-health.json")
+            ),
+            model_fallbacks=model_fallbacks,
+            codex_models_url=_validated_endpoint(
+                "CWS_CODEX_MODELS_URL", DEFAULT_CODEX_MODELS_URL
+            ),
+            codex_responses_url=_validated_endpoint(
+                "CWS_CODEX_RESPONSES_URL", DEFAULT_CODEX_RESPONSES_URL
+            ),
         )
 
 
@@ -578,9 +662,18 @@ class UsageQueryError(RuntimeError):
 
 
 class AccountRecord:
-    def __init__(self, alias: str, auth_path: Path):
+    def __init__(
+        self,
+        alias: str,
+        auth_path: Path,
+        *,
+        models_url: str = DEFAULT_CODEX_MODELS_URL,
+        responses_url: str = DEFAULT_CODEX_RESPONSES_URL,
+    ):
         self.alias = alias
         self.auth_path = auth_path
+        self.models_url = models_url
+        self.responses_url = responses_url
         self.lock = asyncio.Lock()
         self.usage_cache: tuple[float, dict[str, Any] | None] = (0.0, None)
         self.official_refresh_required = False
@@ -643,6 +736,177 @@ class AccountRecord:
             self.usage_cache = (0.0, None)
             self.official_refresh_required = False
             return payload
+
+    @staticmethod
+    def _codex_headers(payload: dict[str, Any]) -> dict[str, str]:
+        tokens = payload["tokens"]
+        access_token = tokens["access_token"]
+        account_id = tokens.get("account_id") or token_account_id(access_token)
+        if not account_id:
+            raise ValueError("ChatGPT account id is missing")
+        return {
+            "Authorization": f"Bearer {access_token}",
+            "ChatGPT-Account-Id": account_id,
+            "Content-Type": "application/json",
+            "User-Agent": "codex-cli",
+        }
+
+    async def _codex_request(
+        self,
+        client: httpx.AsyncClient,
+        payload: dict[str, Any],
+        method: str,
+        url: str,
+        timeout: int,
+        *,
+        json_body: dict[str, Any] | None = None,
+    ) -> httpx.Response:
+        async def send(auth_payload: dict[str, Any]) -> httpx.Response:
+            request = client.request(
+                method,
+                url,
+                headers=self._codex_headers(auth_payload),
+                json=json_body,
+                timeout=timeout,
+            )
+            return await asyncio.wait_for(request, timeout=timeout)
+
+        response = await send(payload)
+        if response.status_code != 401:
+            return response
+
+        rejected_token = payload["tokens"]["access_token"]
+        refreshed = await self.ensure_fresh(
+            client,
+            0,
+            force=True,
+            reason="model_probe_unauthorized",
+            rejected_access_token=rejected_token,
+        )
+        return await send(refreshed)
+
+    async def discover_models(
+        self,
+        client: httpx.AsyncClient,
+        payload: dict[str, Any],
+        timeout: int,
+    ) -> list[str]:
+        """Discover supported Codex text models without retaining response content."""
+        try:
+            response = await self._codex_request(
+                client, payload, "GET", self.models_url, timeout
+            )
+        except (asyncio.TimeoutError, httpx.TimeoutException) as exc:
+            raise RuntimeError("model discovery timed out") from exc
+        except httpx.HTTPError as exc:
+            raise RuntimeError("model discovery request failed") from exc
+        if response.status_code >= 400:
+            raise RuntimeError(f"model discovery failed with HTTP {response.status_code}")
+        try:
+            body = response.json()
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise RuntimeError("model discovery returned invalid JSON") from exc
+        if not isinstance(body, dict):
+            raise RuntimeError("model discovery returned a non-object")
+        models = filter_codex_text_models(body)
+        if not models:
+            raise RuntimeError("model discovery returned no supported text models")
+        return models
+
+    @staticmethod
+    def _probe_error(response: httpx.Response) -> tuple[str | None, str | None] | None:
+        payloads: list[dict[str, Any]] = []
+        try:
+            body = response.json()
+        except (json.JSONDecodeError, ValueError):
+            body = None
+        if isinstance(body, dict):
+            payloads.append(body)
+        else:
+            for line in response.text.splitlines():
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if not data or data == "[DONE]":
+                    continue
+                try:
+                    event = json.loads(data)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if isinstance(event, dict):
+                    payloads.append(event)
+
+        for payload in payloads:
+            error = payload.get("error")
+            if not isinstance(error, dict):
+                response_payload = payload.get("response")
+                if isinstance(response_payload, dict):
+                    error = response_payload.get("error")
+            if isinstance(error, dict):
+                code = error.get("code")
+                message = error.get("message")
+                return (
+                    code if isinstance(code, str) else None,
+                    message if isinstance(message, str) else None,
+                )
+        if response.status_code >= 400:
+            return (None, f"HTTP {response.status_code}")
+        return None
+
+    async def probe_model(
+        self,
+        client: httpx.AsyncClient,
+        payload: dict[str, Any],
+        model: str,
+        timeout: int,
+    ) -> dict[str, Any]:
+        """Send one fixed minimal probe and return only sanitized structured status."""
+        request_body = {
+            "model": model,
+            "input": MODEL_PROBE_INPUT,
+            "store": False,
+            "max_output_tokens": 16,
+        }
+        try:
+            response = await self._codex_request(
+                client,
+                payload,
+                "POST",
+                self.responses_url,
+                timeout,
+                json_body=request_body,
+            )
+        except (asyncio.TimeoutError, httpx.TimeoutException):
+            return {
+                "status": "probe_error",
+                "available": None,
+                "error_code": "timeout",
+                "error_message": "request timed out",
+            }
+        except (httpx.HTTPError, OSError, ValueError):
+            return {
+                "status": "probe_error",
+                "available": None,
+                "error_code": "request_failed",
+                "error_message": "probe request failed",
+            }
+
+        error = self._probe_error(response)
+        if error is None:
+            return {
+                "status": "available",
+                "available": True,
+                "http_status": response.status_code,
+            }
+        error_code, error_message = error
+        status = classify_probe_failure(response.status_code, error_code, error_message)
+        return {
+            "status": status,
+            "available": None if status == "probe_error" else False,
+            "http_status": response.status_code,
+            **({"error_code": error_code} if error_code else {}),
+            **({"error_message": error_message} if error_message else {}),
+        }
 
     async def usage(self, client: httpx.AsyncClient, payload: dict[str, Any], cache_seconds: int) -> dict[str, Any]:
         cached_at, cached = self.usage_cache
@@ -757,9 +1021,12 @@ def account_selection_key(
 class TokenBroker:
     def __init__(self, settings: BrokerSettings, client: httpx.AsyncClient | None = None):
         self.settings = settings
-        self.client = client or httpx.AsyncClient(timeout=20.0)
+        self.owns_client = client is None
+        self.client = client if client is not None else httpx.AsyncClient(timeout=20.0)
         self.accounts = self._discover_accounts()
         self.state_lock = asyncio.Lock()
+        self.model_health_store = ModelHealthStore(settings.model_health_file)
+        self.probe_lock = asyncio.Lock()
 
     def _discover_accounts(self) -> dict[str, AccountRecord]:
         paths: list[tuple[str, Path]] = []
@@ -768,7 +1035,111 @@ class TokenBroker:
         if self.settings.accounts_dir.is_dir():
             for auth_path in sorted(self.settings.accounts_dir.glob("*/auth.json")):
                 paths.append((auth_path.parent.name, auth_path))
-        return {alias: AccountRecord(alias, path) for alias, path in paths}
+        return {
+            alias: AccountRecord(
+                alias,
+                path,
+                models_url=self.settings.codex_models_url,
+                responses_url=self.settings.codex_responses_url,
+            )
+            for alias, path in paths
+        }
+
+    async def probe_models_once(self, now: float | None = None) -> dict[str, Any]:
+        """Probe every account once, with account-level concurrency and no overlapping rounds."""
+        async with self.probe_lock:
+            probed_at = time.time() if now is None else now
+            prior_state = self.model_health_store.load()
+            prior_accounts = prior_state.get("accounts", {})
+            semaphore = asyncio.Semaphore(self.settings.model_probe_concurrency)
+
+            async def probe_account(alias: str, account: AccountRecord) -> tuple[str, dict[str, Any]]:
+                async with semaphore:
+                    previous = prior_accounts.get(alias)
+                    previous_models = (
+                        previous.get("models", {}) if isinstance(previous, dict) else {}
+                    )
+                    try:
+                        auth = await account.ensure_fresh(
+                            self.client, self.settings.refresh_window_seconds
+                        )
+                    except Exception:
+                        auth = None
+
+                    discovery_source = "remote"
+                    if auth is None:
+                        models = list(self.settings.model_fallbacks)
+                        discovery_source = "fallback"
+                    else:
+                        try:
+                            models = await account.discover_models(
+                                self.client,
+                                auth,
+                                self.settings.model_probe_timeout_seconds,
+                            )
+                        except Exception:
+                            models = list(self.settings.model_fallbacks)
+                            discovery_source = "fallback"
+
+                    model_records: dict[str, dict[str, Any]] = {}
+                    for model in dict.fromkeys(models):
+                        if auth is None:
+                            result = {
+                                "status": "probe_error",
+                                "available": None,
+                                "error_code": "auth_setup_failed",
+                                "error_message": "account authentication failed",
+                            }
+                        else:
+                            try:
+                                result = await account.probe_model(
+                                    self.client,
+                                    auth,
+                                    model,
+                                    self.settings.model_probe_timeout_seconds,
+                                )
+                            except Exception:
+                                result = {
+                                    "status": "probe_error",
+                                    "available": None,
+                                    "error_code": "request_failed",
+                                    "error_message": "probe request failed",
+                                }
+                        model_records[model] = merge_model_probe(
+                            previous_models.get(model),
+                            result,
+                            probed_at,
+                            self.settings.model_cooldown_seconds,
+                        )
+
+                    record: dict[str, Any] = {
+                        "discovery_source": discovery_source,
+                        "last_probe_at": probed_at,
+                        "next_probe_at": probed_at
+                        + self.settings.model_probe_interval_seconds,
+                        "models": model_records,
+                    }
+                    record["available"] = account_probe_available(record, probed_at)
+                    return alias, record
+
+            results = await asyncio.gather(
+                *(probe_account(alias, account) for alias, account in self.accounts.items())
+            )
+            for alias, record in results:
+                self.model_health_store.replace_account(alias, record)
+            return self.model_health_store.load()
+
+    async def model_probe_loop(self) -> None:
+        """Run one immediate model-health round and then repeat at the configured interval."""
+        while True:
+            try:
+                await self.probe_models_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # A transient round failure must not terminate future health checks.
+                pass
+            await asyncio.sleep(self.settings.model_probe_interval_seconds)
 
     def _load_state(self) -> dict[str, Any]:
         try:
@@ -1027,7 +1398,25 @@ def portal_users() -> list[dict[str, Any]]:
 settings = BrokerSettings.from_env()
 broker = TokenBroker(settings)
 usage_store = DeviceUsageStore(settings.usage_state_file)
-app = FastAPI(title="CWS Codex Plus Broker", version=BROKER_VERSION)
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    probe_task = asyncio.create_task(broker.model_probe_loop())
+    application.state.model_probe_task = probe_task
+    try:
+        yield
+    finally:
+        probe_task.cancel()
+        try:
+            await probe_task
+        except asyncio.CancelledError:
+            pass
+        if broker.owns_client:
+            await broker.client.aclose()
+
+
+app = FastAPI(title="CWS Codex Plus Broker", version=BROKER_VERSION, lifespan=lifespan)
 device_registry_write_lock = asyncio.Lock()
 token_query_failure_lock = asyncio.Lock()
 token_query_failures: dict[str, list[float]] = {}
