@@ -283,7 +283,7 @@ if ($LibraryMode) {
 
 $Config = Get-CwsConfig -ConfigPath $ConfigPath
 $ClientHome = Get-CwsClientHome -Config $Config
-$TokenPath = Join-Path $ClientHome "device-token.dpapi"
+$TokenPath = Join-Path $PSScriptRoot "device-token.dpapi"
 $StatePath = Join-Path $ClientHome "update-state.json"
 $Now = [DateTimeOffset]::UtcNow
 $Candidate = Get-CwsUpdateCandidate `

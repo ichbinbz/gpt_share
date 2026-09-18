@@ -14,6 +14,41 @@ POWERSHELL = shutil.which("powershell.exe") or shutil.which("powershell")
 
 @unittest.skipUnless(POWERSHELL, "Windows PowerShell is required")
 class WindowsUpdateRuntimeTests(unittest.TestCase):
+    def test_normal_updater_reads_token_from_install_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory)
+            shutil.copy2(WINDOWS_CLIENT / "Update-CwsCodex.ps1", fixture)
+            config = fixture / "config.json"
+            config.write_text(json.dumps({"broker_url": "http://127.0.0.1:8765", "client_home": str(fixture / "state")}))
+            common = r'''
+function Get-CwsConfig { param($ConfigPath) Get-Content $ConfigPath -Raw | ConvertFrom-Json }
+function Get-CwsClientHome { param($Config) $Config.client_home }
+function Get-CwsDeviceToken {
+    param($TokenPath)
+    [IO.File]::WriteAllText((Join-Path $PSScriptRoot "token-path.txt"), $TokenPath)
+    if ($TokenPath -ne (Join-Path $PSScriptRoot "device-token.dpapi")) { throw "Wrong token location" }
+    "fixture-token"
+}
+function Write-CwsJsonAtomic { param($Path, $Value) }
+function Enable-CwsTls12 { }
+function Invoke-RestMethod {
+    param($Uri, $Headers, $TimeoutSec, $MaximumRedirection)
+    if ($Uri -notlike "*/v1/client/releases/latest") { throw "Unexpected GitHub fallback" }
+    [pscustomobject]@{
+        release_version="0.1.7"; published_at="2026-09-18T00:00:00Z";
+        assets=@([pscustomobject]@{
+            platform="windows-installer"; name="CWS-Codex-Setup-v0.1.7.exe"; size=9;
+            sha256="9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c";
+            download_url="/v1/client/releases/download/CWS-Codex-Setup-v0.1.7.exe"
+        })
+    }
+}
+'''
+            (fixture / "Common-CwsCodex.ps1").write_text(common, encoding="utf-8-sig")
+            result = self.run_powershell(fixture / "Update-CwsCodex.ps1", "-ConfigPath", config)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((fixture / "token-path.txt").read_text(), str(fixture / "device-token.dpapi"))
+
     def run_powershell(self, script: Path, *args: Path | str, timeout: int = 10):
         return subprocess.run(
             [
