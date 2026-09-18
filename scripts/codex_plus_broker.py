@@ -1310,6 +1310,7 @@ class TokenBroker:
                         and lease.get("client_device_hash") == client_device_hash
                     ):
                         leases.pop(lease_id, None)
+            blocked_affinity_removed = False
             alias = existing.get("account_alias") if isinstance(existing, dict) else None
             if alias not in self.accounts:
                 alias = None
@@ -1317,6 +1318,7 @@ class TokenBroker:
                 leases.pop(str(requested_lease_id), None)
                 existing = None
                 alias = None
+                blocked_affinity_removed = True
 
             snapshots: dict[str, tuple[dict[str, Any], dict[str, Any] | None]] = {}
             if alias is None:
@@ -1327,6 +1329,8 @@ class TokenBroker:
                         active_counts[leased_alias] += 1
                 candidates = [name for name in self.accounts if probe_available(name) is not False]
                 if not candidates:
+                    if blocked_affinity_removed:
+                        self._save_state(state)
                     raise HTTPException(status_code=503, detail="all Codex accounts have blocked models")
                 for name in candidates:
                     account = self.accounts[name]
@@ -1335,6 +1339,8 @@ class TokenBroker:
                     except Exception:
                         continue
                 if not snapshots:
+                    if blocked_affinity_removed:
+                        self._save_state(state)
                     raise HTTPException(status_code=503, detail="all Codex accounts are unavailable")
                 alias = min(
                     snapshots,
