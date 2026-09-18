@@ -12,23 +12,6 @@ from typing import Any
 
 MODEL_STATUSES = {"available", "capacity", "quota", "auth", "unsupported", "probe_error"}
 BLOCKING_STATUSES = {"capacity", "quota", "auth"}
-MODEL_FIELDS = {
-    "status",
-    "available",
-    "last_probe_at",
-    "last_probe_error_at",
-    "cooldown_until",
-    "http_status",
-    "error_code",
-    "error_message",
-}
-ACCOUNT_FIELDS = {
-    "available",
-    "discovery_source",
-    "last_probe_at",
-    "next_probe_at",
-    "models",
-}
 
 
 def filter_codex_text_models(payload: dict[str, Any]) -> list[str]:
@@ -99,7 +82,7 @@ def _model_record(record: dict[str, Any] | None) -> dict[str, Any]:
     if isinstance(status, str) and status in MODEL_STATUSES:
         cleaned["status"] = status
     available = record.get("available")
-    if available is True or available is False or available is None and "available" in record:
+    if available is True or available is False or (available is None and "available" in record):
         cleaned["available"] = available
     for field in ("last_probe_at", "last_probe_error_at", "cooldown_until"):
         if _is_number(record.get(field)):
@@ -119,7 +102,7 @@ def _account_record(record: dict[str, Any] | None) -> dict[str, Any]:
 
     cleaned: dict[str, Any] = {}
     available = record.get("available")
-    if available is True or available is False or available is None and "available" in record:
+    if available is True or available is False or (available is None and "available" in record):
         cleaned["available"] = available
     if isinstance(record.get("discovery_source"), str):
         cleaned["discovery_source"] = record["discovery_source"]
@@ -181,7 +164,7 @@ def merge_model_probe(
     if status == "available":
         merged["available"] = True
         merged.pop("cooldown_until", None)
-    elif status in {"capacity", "quota", "auth", "unsupported"}:
+    elif status in BLOCKING_STATUSES or status == "unsupported":
         merged["available"] = False
         if status == "capacity":
             merged["cooldown_until"] = now + cooldown_seconds
@@ -211,7 +194,7 @@ def account_probe_available(record: dict[str, Any] | None, now: float) -> bool |
 
     def is_blocked(model: dict[str, Any]) -> bool:
         status = model.get("status")
-        if status in {"quota", "auth"}:
+        if status in BLOCKING_STATUSES and status != "capacity":
             return True
         if status != "capacity":
             return False
