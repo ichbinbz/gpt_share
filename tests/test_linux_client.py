@@ -58,8 +58,9 @@ def test_linux_client_checks_github_release_and_preserves_token_on_update():
 
 
 class _BytesResponse:
-    def __init__(self, payload: bytes):
+    def __init__(self, payload: bytes, headers: dict[str, str] | None = None):
         self.payload = payload
+        self.headers = headers or {}
 
     def __enter__(self):
         return self
@@ -221,6 +222,24 @@ def test_linux_broker_candidate_rejects_cross_origin_or_userinfo_download(monkey
         MODULE.broker_release_candidate({"broker_url": "https://broker.example.test"}, "device-token")
 
 
+@pytest.mark.parametrize(
+    "download_url",
+    [
+        "https://@broker.example.test/v1/client/releases/download/CWS-Codex-Linux-v0.1.7.tar.gz",
+    ],
+)
+def test_linux_broker_candidate_rejects_empty_userinfo_download(monkeypatch, download_url):
+    manifest = _broker_manifest()
+    manifest["assets"][0]["download_url"] = download_url
+    monkeypatch.setattr(
+        MODULE,
+        "open_url",
+        lambda *_args, **_kwargs: _BytesResponse(json.dumps(manifest).encode("utf-8")),
+    )
+    with pytest.raises(RuntimeError, match="无效"):
+        MODULE.broker_release_candidate({"broker_url": "https://broker.example.test"}, "device-token")
+
+
 def test_linux_update_hash_mismatch_skips_install_and_cleans_temp_directory(tmp_path, monkeypatch):
     archive_payload = b"tampered archive"
     candidate = {
@@ -296,6 +315,126 @@ def test_linux_github_candidate_rejects_noncanonical_asset_url(monkeypatch):
     )
     with pytest.raises(RuntimeError, match="安全检查"):
         MODULE.github_release_candidate({})
+
+
+def test_linux_github_candidate_rejects_empty_userinfo(monkeypatch):
+    release = _github_release()
+    release["assets"][0]["browser_download_url"] = release["assets"][0]["browser_download_url"].replace(
+        "https://", "https://@", 1
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "open_url",
+        lambda *_args, **_kwargs: _BytesResponse(json.dumps(release).encode("utf-8")),
+    )
+    with pytest.raises(RuntimeError, match="安全检查"):
+        MODULE.github_release_candidate({})
+
+
+@pytest.mark.parametrize("tag_name", ["0.1.7", " v0.1.7", "v0.1.7 ", "vv0.1.7"])
+def test_linux_github_candidate_requires_exact_v_semver_tag(monkeypatch, tag_name):
+    release = _github_release()
+    release["tag_name"] = tag_name
+    monkeypatch.setattr(
+        MODULE,
+        "open_url",
+        lambda *_args, **_kwargs: _BytesResponse(json.dumps(release).encode("utf-8")),
+    )
+    with pytest.raises(RuntimeError, match="版本号无效"):
+        MODULE.github_release_candidate({})
+
+
+def test_linux_no_redirect_handler_refuses_redirect_request():
+    handler = MODULE.NoRedirectHandler()
+    assert handler.redirect_request(None, None, 302, "Found", {}, "https://other.example.test") is None
+
+
+def test_linux_confirmation_names_selected_update_source(monkeypatch):
+    observed = []
+    monkeypatch.setattr(MODULE.shutil, "which", lambda _name: "/usr/bin/zenity")
+    monkeypatch.setattr(
+        MODULE.subprocess,
+        "run",
+        lambda command, **_kwargs: observed.append(command) or type("Result", (), {"returncode": 1})(),
+    )
+    assert not MODULE.confirm_graphical_update("0.1.7", "Broker")
+    assert "Broker" in observed[0][-1]
+    assert "GitHub" not in observed[0][-1]
+
+
+class _OversizeResponse:
+    def __init__(self, payload: bytes, headers: dict[str, str] | None = None):
+        self.payload = payload
+        self.headers = headers or {}
+        self.read_sizes = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self, size: int = -1) -> bytes:
+        self.read_sizes.append(size)
+        if size < 0:
+            size = len(self.payload)
+        result, self.payload = self.payload[:size], self.payload[size:]
+        return result
+
+
+def test_linux_update_stops_oversize_stream_before_extraction_and_cleans_temp(tmp_path, monkeypatch):
+    expected_size = 3
+    response = _OversizeResponse(b"oversized")
+    candidate = {
+        "source": "Broker",
+        "version": "0.1.7",
+        "name": "CWS-Codex-Linux-v0.1.7.tar.gz",
+        "size": expected_size,
+        "sha256": "0" * 64,
+        "download_url": "https://broker.example.test/v1/client/releases/download/CWS-Codex-Linux-v0.1.7.tar.gz",
+        "headers": {"Authorization": "Bearer device-token"},
+    }
+    created = []
+    real_mkdtemp = tempfile.mkdtemp
+
+    class TrackingTemporaryDirectory:
+        def __init__(self, **_kwargs):
+            self.name = real_mkdtemp(dir=tmp_path)
+            created.append(Path(self.name))
+
+        def __enter__(self):
+            return self.name
+
+        def __exit__(self, *_args):
+            shutil.rmtree(self.name)
+
+    monkeypatch.setattr(MODULE.tempfile, "TemporaryDirectory", TrackingTemporaryDirectory)
+    monkeypatch.setattr(MODULE, "open_url", lambda *_args, **_kwargs: response)
+    monkeypatch.setattr(MODULE, "safe_extract_tar", lambda *_args: pytest.fail("tar extraction must not run"))
+    monkeypatch.setattr(MODULE.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("installer must not run"))
+    with pytest.raises(RuntimeError, match="size"):
+        MODULE.install_release_candidate(candidate, {"proxy_url": ""})
+    assert response.read_sizes and max(response.read_sizes) <= expected_size + 1
+    assert created and not created[0].exists()
+
+
+def test_linux_update_rejects_oversize_content_length_without_reading_or_extracting(monkeypatch):
+    response = _OversizeResponse(b"oversized", headers={"Content-Length": "9"})
+    candidate = {
+        "source": "Broker",
+        "version": "0.1.7",
+        "name": "CWS-Codex-Linux-v0.1.7.tar.gz",
+        "size": 3,
+        "sha256": "0" * 64,
+        "download_url": "https://broker.example.test/v1/client/releases/download/CWS-Codex-Linux-v0.1.7.tar.gz",
+        "headers": {"Authorization": "Bearer device-token"},
+    }
+    monkeypatch.setattr(MODULE, "open_url", lambda *_args, **_kwargs: response)
+    monkeypatch.setattr(MODULE, "safe_extract_tar", lambda *_args: pytest.fail("tar extraction must not run"))
+    monkeypatch.setattr(MODULE.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("installer must not run"))
+    with pytest.raises(RuntimeError, match="size"):
+        MODULE.install_release_candidate(candidate, {"proxy_url": ""})
+    assert response.read_sizes == []
 
 
 def test_linux_auth_payload_matches_official_codex_format():

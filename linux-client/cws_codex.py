@@ -274,7 +274,11 @@ def parsed_origin(url: str, source_name: str) -> tuple[str, str, int]:
         port = parsed.port
     except ValueError as exc:
         raise RuntimeError(f"{source_name} 下载地址无效") from exc
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or "@" in parsed.netloc
+    ):
         raise RuntimeError(f"{source_name} 下载地址无效")
     normalized_port = port if port is not None else (443 if parsed.scheme == "https" else 80)
     return (parsed.scheme.lower(), parsed.hostname.lower(), normalized_port)
@@ -341,9 +345,10 @@ def github_release_candidate(config: dict[str, Any]) -> dict[str, Any]:
         proxy_url=str(config.get("proxy_url") or ""),
         source_name="GitHub",
     )
-    tag = str(release.get("tag_name") or "").strip()
-    latest = tag[1:] if tag.startswith("v") else tag
-    version_tuple(latest)
+    tag = release.get("tag_name")
+    if not isinstance(tag, str) or not re.fullmatch(rf"v{SEMVER_PATTERN}", tag):
+        raise RuntimeError(f"更新版本号无效：{tag}")
+    latest = tag[1:]
     asset_name = f"CWS-Codex-Linux-v{latest}.tar.gz"
     assets = release.get("assets")
     asset = next(
@@ -367,7 +372,7 @@ def github_release_candidate(config: dict[str, Any]) -> dict[str, Any]:
     expected_path = f"/{GITHUB_REPOSITORY}/releases/download/v{latest}/{asset_name}"
     if (
         parsed.scheme != "https" or parsed.hostname != "github.com" or port not in {None, 443}
-        or parsed.username or parsed.password or parsed.path != expected_path or parsed.query or parsed.fragment
+        or "@" in parsed.netloc or parsed.path != expected_path or parsed.query or parsed.fragment
     ):
         raise RuntimeError("GitHub Release 下载地址未通过安全检查")
     return {
@@ -416,6 +421,25 @@ def safe_extract_tar(archive_path: Path, extract_root: Path) -> None:
             archive.extractall(extract_root)
 
 
+def download_archive(response: Any, archive_path: Path, expected_size: int) -> None:
+    content_length = response.headers.get("Content-Length")
+    if content_length is not None:
+        if not isinstance(content_length, str) or not content_length.isdecimal() or int(content_length) != expected_size:
+            raise RuntimeError("下载文件 size 校验失败")
+    received = 0
+    with archive_path.open("wb") as output:
+        while True:
+            chunk = response.read(expected_size - received + 1)
+            if not chunk:
+                break
+            received += len(chunk)
+            if received > expected_size:
+                raise RuntimeError("下载文件 size 校验失败")
+            output.write(chunk)
+    if received != expected_size:
+        raise RuntimeError(f"下载文件 size 校验失败：期望 {expected_size}，实际 {received}")
+
+
 def install_release_candidate(candidate: dict[str, Any], config: dict[str, Any]) -> bool:
     proxy_url = str(config.get("proxy_url") or "")
     with tempfile.TemporaryDirectory(prefix="cws-codex-update-") as temporary:
@@ -426,11 +450,8 @@ def install_release_candidate(candidate: dict[str, Any], config: dict[str, Any])
             proxy_url,
             180,
             block_redirects=candidate.get("source") == "Broker",
-        ) as response, archive_path.open("wb") as output:
-            shutil.copyfileobj(response, output)
-        actual_size = archive_path.stat().st_size
-        if actual_size != candidate["size"]:
-            raise RuntimeError(f"下载文件 size 校验失败：期望 {candidate['size']}，实际 {actual_size}")
+        ) as response:
+            download_archive(response, archive_path, candidate["size"])
         actual_sha256 = hashlib.sha256(archive_path.read_bytes()).hexdigest()
         if actual_sha256 != candidate["sha256"]:
             raise RuntimeError("下载文件 SHA-256 校验失败")
@@ -456,9 +477,9 @@ def install_release_candidate(candidate: dict[str, Any], config: dict[str, Any])
     return True
 
 
-def confirm_graphical_update(version: str) -> bool:
+def confirm_graphical_update(version: str, source: str) -> bool:
     message = (
-        f"检测到 CWS Codex v{version}。是否立即从 GitHub 下载并自动更新？\n\n"
+        f"检测到 CWS Codex v{version}。是否立即从 {source} 下载并自动更新？\n\n"
         "更新会保留设备令牌、VS Code 配置和历史对话。"
     )
     zenity = shutil.which("zenity")
@@ -503,7 +524,7 @@ def check_for_update(config_path: Path = CONFIG_PATH, *, force: bool = False) ->
     print(f"CWS Codex 当前版本：{VERSION}；更新来源：{candidate['source']}；最新版本：{latest}")
     if latest_tuple <= version_tuple(VERSION):
         return False
-    if not confirm_graphical_update(latest):
+    if not confirm_graphical_update(latest, str(candidate["source"])):
         return False
     return install_release_candidate(candidate, config)
 
