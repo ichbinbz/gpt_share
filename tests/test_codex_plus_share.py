@@ -992,6 +992,54 @@ def test_blocked_affinity_cleanup_is_saved_before_replacement_failure(monkeypatc
     assert "old-024-lease" not in persisted["leases"]
 
 
+def test_blocked_affinity_cleanup_is_saved_before_missing_account_id_failure(monkeypatch):
+    now = 2_000_000_000
+    device_hash = hashlib.sha256(b"pc").hexdigest()
+    persisted = {
+        "leases": {
+            "old-024-lease": {
+                "account_alias": "chatgpt024",
+                "device_token_id": "device-a",
+                "client_device_hash": device_hash,
+                "created_at": now,
+                "expires_at": now + 100,
+            }
+        }
+    }
+    broker = health_aware_broker(
+        now,
+        persisted,
+        {
+            "chatgpt010": {"models": {"gpt-test": {"status": "available", "available": True}}},
+            "chatgpt024": {
+                "models": {
+                    "gpt-test": {
+                        "status": "quota",
+                        "available": False,
+                    }
+                }
+            },
+        },
+    )
+    broker._load_state = lambda: json.loads(json.dumps(persisted))
+    broker._save_state = lambda value: persisted.update(value)
+
+    async def snapshot_without_account_id(_account):
+        return {"tokens": {"access_token": jwt({"exp": now + 3600})}}, None
+
+    broker._account_snapshot = snapshot_without_account_id
+    monkeypatch.setattr("scripts.codex_plus_broker.time.time", lambda: now)
+
+    with pytest.raises(broker_module.HTTPException) as exc_info:
+        asyncio.run(
+            broker.lease(DeviceIdentity(token_id="device-a", label="employee-a"), "pc", "old-024-lease")
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "selected account has no ChatGPT account id"
+    assert "old-024-lease" not in persisted["leases"]
+
+
 def test_blocked_affinity_cleanup_is_saved_when_every_account_is_blocked(monkeypatch):
     now = 2_000_000_000
     device_hash = hashlib.sha256(b"pc").hexdigest()
