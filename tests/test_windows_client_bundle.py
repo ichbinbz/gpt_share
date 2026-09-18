@@ -167,20 +167,30 @@ def test_usage_reporter_sends_only_cumulative_counters_with_device_token():
     assert "Body.prompt" not in reporter
 
 
-def test_windows_client_checks_github_release_and_preserves_token_during_auto_update():
+def test_windows_client_checks_broker_before_github_and_preserves_token_during_auto_update():
     updater = read("Update-CwsCodex.ps1")
     installer = read("Install-CwsCodex.ps1")
     launcher = read("Launch-CwsCodex.ps1")
+    common = read("Common-CwsCodex.ps1")
+    assert "function Enable-CwsTls12" in common
+    assert "-bor [Net.SecurityProtocolType]::Tls12" in common
+    assert '"/v1/client/releases/latest"' in updater
+    assert "Get-CwsDeviceToken" in updater
+    assert "TotalHours" not in updater
     assert "api.github.com/repos/ichbinbz/gpt_share/releases/latest" in updater
     assert "CWS-Codex-Setup-v$LatestVersion.exe" in updater
     assert "System.Windows.Forms.MessageBox" in updater
     assert 'ArgumentList @("/S", "/AUTOUPDATE")' in updater
-    assert "sha256:" in updater
+    assert "Install-CwsUpdateCandidate" in updater
+    assert "current_version = $CurrentVersion.ToString()" in updater
+    assert "source          = [string] $Candidate.source" in updater
     assert "[switch] $AutoUpdate" in installer
     assert "$KeepExisting = $AutoUpdate" in installer
     assert 'client_version = $ClientVersion' in installer
     assert '"Update-CwsCodex.ps1"' in installer
     assert "Client auto-update completed" in launcher
+    assert "[switch] $StatusOnly" in launcher
+    assert "CWS Codex 员工端 v$([string] $Config.client_version)" in launcher
 
 
 def test_windows_installer_never_starts_or_waits_for_vscode():

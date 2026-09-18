@@ -6,7 +6,7 @@ CWS Codex Windows 员工端 v0.1.6
 2. 双击 CWS-Codex-Setup-v0.1.6.exe。
 3. 按提示输入管理员分配给本机的设备令牌；代理地址请使用管理员提供的配置。
 4. 安装完成后，双击桌面的“公司 Codex（VS Code）”。安装过程本身不会启动 VS Code；首次使用快捷方式时才检查 Codex 扩展。
-5. 检测到新版本时会弹出更新提示，点击“是”即可从 GitHub Release 自动完成升级。
+5. 每次启动都会先从公司 Broker 检查更新；Broker 不可用时自动改用 GitHub Release。检测到新版本时会显示更新来源并弹出提示，点击“是”后会先校验文件大小和 SHA-256，再自动完成升级。
 
 使用效果：
 - 保留用户原有的 VS Code 设置、主题、扩展、最近目录和窗口恢复行为。
@@ -20,6 +20,7 @@ CWS Codex Windows 员工端 v0.1.6
 - 无法连接时，运行 %LOCALAPPDATA%\CWS Codex\诊断.cmd。
 - 安装失败时，查看 %TEMP%\CWS-Codex-Install.log。
 - 如需更换代理，运行 %LOCALAPPDATA%\CWS Codex\Configure-Proxy.cmd。
+- 如需只查看已安装版本，可在 PowerShell 中运行 %LOCALAPPDATA%\CWS Codex\Launch-CwsCodex.ps1 -StatusOnly；此命令不会检查更新、同步凭据或启动 VS Code。
 
 卸载：
 - 在 Windows“设置 → 应用 → 已安装的应用”中卸载 CWS Codex。

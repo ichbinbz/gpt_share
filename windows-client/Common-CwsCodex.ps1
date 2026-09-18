@@ -2,6 +2,11 @@
 
 Add-Type -AssemblyName System.Security
 
+function Enable-CwsTls12 {
+    [Net.ServicePointManager]::SecurityProtocol =
+        [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+}
+
 function Write-CwsJsonAtomic {
     param(
         [Parameter(Mandatory = $true)] [string] $Path,
@@ -131,7 +136,15 @@ function Get-CwsClientHome {
 function Get-CwsFileSha256 {
     param([Parameter(Mandatory = $true)] [string] $Path)
 
-    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    $Stream = [System.IO.File]::OpenRead($Path)
+    $Hasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($Hasher.ComputeHash($Stream))).Replace("-", "").ToLowerInvariant()
+    }
+    finally {
+        $Hasher.Dispose()
+        $Stream.Dispose()
+    }
 }
 
 function Get-CwsSessionId {

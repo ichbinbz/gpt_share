@@ -1,4 +1,7 @@
-﻿param([string] $ConfigPath = (Join-Path $PSScriptRoot "config.json"))
+﻿param(
+    [string] $ConfigPath = (Join-Path $PSScriptRoot "config.json"),
+    [switch] $StatusOnly
+)
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Common-CwsCodex.ps1")
@@ -10,6 +13,10 @@ function Write-CwsLaunchLog {
 }
 
 $Config = Get-CwsConfig -ConfigPath $ConfigPath
+if ($StatusOnly) {
+    Write-Host "CWS Codex 员工端 v$([string] $Config.client_version)"
+    return
+}
 $Updater = Join-Path $PSScriptRoot "Update-CwsCodex.ps1"
 if (Test-Path -LiteralPath $Updater) {
     try {
