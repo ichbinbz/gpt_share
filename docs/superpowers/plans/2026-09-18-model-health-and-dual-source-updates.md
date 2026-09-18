@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3.11+, FastAPI, httpx, pytest, PowerShell 5.1, NSIS, POSIX shell, systemd.
 
+**Completion:** Implemented and verified on 2026-09-18. See [release handoff](2026-09-18-model-health-and-dual-source-updates-handoff.md) for final checks and the live 024 recovery exception.
+
 **Spec:** `docs/superpowers/specs/2026-09-18-model-health-and-dual-source-updates-design.md`
 
 ## Global Constraints
@@ -40,7 +42,7 @@
 - Produces: `merge_model_probe(previous: dict[str, Any] | None, result: dict[str, Any], now: float, cooldown_seconds: int) -> dict[str, Any]`
 - Produces: `ModelHealthStore(path: Path)` with `load()`, `save(state)`, `account(alias)`, and `replace_account(alias, record)`.
 
-- [ ] **Step 1: Write failing filtering and classification tests**
+- [x] **Step 1: Write failing filtering and classification tests**
 
 ```python
 def test_filters_only_available_codex_text_models():
@@ -63,17 +65,17 @@ def test_classifies_probe_failures(status, code, message, expected):
     assert classify_probe_failure(status, code, message) == expected
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `python -m pytest -q tests/test_codex_model_health.py`
 
 Expected: collection fails because `scripts.codex_model_health` does not exist.
 
-- [ ] **Step 3: Implement filtering and classification**
+- [x] **Step 3: Implement filtering and classification**
 
 Implement normalization that accepts the observed Codex list shapes (`models` or `data`, `slug` or `id`), sorts/deduplicates names, excludes unavailable and non-text models, and never logs the payload. Match capacity by normalized code `server_overloaded` or case-insensitive text `selected model is at capacity`; match quota/auth/unsupported before falling back to `probe_error`.
 
-- [ ] **Step 4: Write failing persistence and availability tests**
+- [x] **Step 4: Write failing persistence and availability tests**
 
 ```python
 def test_transient_probe_error_preserves_recent_success(tmp_path):
@@ -94,21 +96,21 @@ def test_account_is_blocked_only_when_every_supported_model_is_blocked():
     assert account_probe_available(record, 2100) is False
 ```
 
-- [ ] **Step 5: Run persistence tests and verify RED**
+- [x] **Step 5: Run persistence tests and verify RED**
 
 Run: `python -m pytest -q tests/test_codex_model_health.py`
 
 Expected: failure because merge, availability, and store behavior are missing.
 
-- [ ] **Step 6: Implement merge, tri-state availability, and atomic store**
+- [x] **Step 6: Implement merge, tri-state availability, and atomic store**
 
 Use `True` for known usable, `False` for known fully blocked, and `None` for unknown. Persist JSON through a same-directory temporary file, `os.replace`, and mode `0600`. Truncate saved error messages to 500 characters and allow only the documented fields.
 
-- [ ] **Step 7: Add the module to the server package**
+- [x] **Step 7: Add the module to the server package**
 
 Add `scripts/codex_model_health.py -> codex_model_health.py` to `PACKAGE_FILES` and install it as mode `0755` in `/opt/cws-codex`.
 
-- [ ] **Step 8: Run focused tests and commit**
+- [x] **Step 8: Run focused tests and commit**
 
 Run: `python -m pytest -q tests/test_codex_model_health.py tests/test_build_server_package.py`
 
@@ -138,7 +140,7 @@ git commit -m "feat: add persistent model health state"
 - Produces: `TokenBroker.model_probe_loop() -> None`
 - Produces: FastAPI lifespan that starts one probe loop and cancels it on shutdown.
 
-- [ ] **Step 1: Write failing HTTP probe tests using `httpx.MockTransport`**
+- [x] **Step 1: Write failing HTTP probe tests using `httpx.MockTransport`**
 
 Create complete fake responses for model discovery, a successful minimal response, JSON `server_overloaded`, SSE error, 401-refresh-retry, and timeout. Assert request headers include `Authorization`, `ChatGPT-Account-Id`, and JSON requests include `store=false`, no tools, and fixed non-user probe text.
 
@@ -149,35 +151,35 @@ assert json.loads(request.content)["store"] is False
 assert "company" not in request.content.decode().lower()
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `python -m pytest -q tests/test_codex_plus_share.py -k 'discover_models or probe_model'`
 
 Expected: failures because probe methods and settings do not exist.
 
-- [ ] **Step 3: Add exact environment-backed settings**
+- [x] **Step 3: Add exact environment-backed settings**
 
 Add integer validation with minimums: interval `>=60`, cooldown `>=60`, concurrency `1..8`, timeout `5..120`; add health path, fallback list, and overridable HTTPS Codex endpoints. Reject non-HTTPS endpoint overrides at startup except `http://127.0.0.1` used by tests.
 
-- [ ] **Step 4: Implement discovery and minimal responses probing**
+- [x] **Step 4: Implement discovery and minimal responses probing**
 
 Reuse `ensure_fresh`; parse both JSON and SSE error events without persisting response text. On a 401, force one OAuth refresh and retry once. Do not retry capacity, quota, unsupported, or auth outcomes inside the same cycle.
 
-- [ ] **Step 5: Write failing orchestration and lifecycle tests**
+- [x] **Step 5: Write failing orchestration and lifecycle tests**
 
 Test seven fake accounts, concurrency never exceeding two, fallback models when discovery fails, one immediate probe at startup, cancellation at shutdown, and no overlapping rounds when one round is slow.
 
-- [ ] **Step 6: Run orchestration tests and verify RED**
+- [x] **Step 6: Run orchestration tests and verify RED**
 
 Run: `python -m pytest -q tests/test_codex_plus_share.py -k 'probe_models_once or probe_loop or lifespan'`
 
 Expected: failures because orchestration/lifespan is missing.
 
-- [ ] **Step 7: Implement orchestration and FastAPI lifespan**
+- [x] **Step 7: Implement orchestration and FastAPI lifespan**
 
 Use `asyncio.Semaphore(settings.model_probe_concurrency)`, one broker-level probe lock, and `asyncio.wait_for` per request. Start the loop through `@asynccontextmanager`; in `finally`, cancel/await the task and close the owned `httpx.AsyncClient`.
 
-- [ ] **Step 8: Run focused tests and commit**
+- [x] **Step 8: Run focused tests and commit**
 
 Run: `python -m pytest -q tests/test_codex_model_health.py tests/test_codex_plus_share.py`
 
@@ -207,7 +209,7 @@ git commit -m "feat: actively probe Codex model capacity"
 - Extends: `TokenBroker.lease(identity, client_device_id, requested_lease_id, client_ip=None, source_ip=None)` candidate filtering and affinity invalidation.
 - Extends: `TokenBroker.account_status(refresh_usage=False)` with sanitized `model_health` data.
 
-- [ ] **Step 1: Write failing scheduler tests**
+- [x] **Step 1: Write failing scheduler tests**
 
 ```python
 def health_aware_broker(now, state):
@@ -266,25 +268,25 @@ def test_existing_affinity_is_dropped_when_account_becomes_blocked(monkeypatch):
 
 Also test unknown health does not exclude an account and all known-blocked accounts return 503.
 
-- [ ] **Step 2: Run scheduler tests and verify RED**
+- [x] **Step 2: Run scheduler tests and verify RED**
 
 Run: `python -m pytest -q tests/test_codex_plus_share.py -k 'blocked or probe_unknown'`
 
 Expected: 024 is still selected or affinity is retained.
 
-- [ ] **Step 3: Implement candidate filtering and affinity invalidation**
+- [x] **Step 3: Implement candidate filtering and affinity invalidation**
 
 Load one immutable health snapshot while holding the lease state lock. Exclude only explicit `False`; retain `True` and `None`. Remove a blocked existing lease before counting active leases and selection.
 
-- [ ] **Step 4: Write failing sanitized status tests**
+- [x] **Step 4: Write failing sanitized status tests**
 
 Assert `/v1/admin/accounts` includes model name/status/timestamps/cooldown/truncated error but does not include `access_token`, `refresh_token`, request body, probe output, or authorization headers.
 
-- [ ] **Step 5: Implement status fields and dashboard rendering**
+- [x] **Step 5: Implement status fields and dashboard rendering**
 
 Render an account badge and a model table using the existing DOM helper, which assigns dynamic strings through `textContent`. Use Chinese labels: `模型可用`, `容量超限`, `额度耗尽`, `鉴权失败`, `不支持`, `探测异常`, `探测未知`.
 
-- [ ] **Step 6: Document operations and run tests**
+- [x] **Step 6: Document operations and run tests**
 
 Document the six probe environment variables, 15-minute schedule, 30-minute cooldown, and how to interpret status. Run:
 
@@ -292,7 +294,7 @@ Document the six probe environment variables, 15-minute schedule, 30-minute cool
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add scripts/codex_plus_broker.py scripts/codex_quota_dashboard.html server-package/README-Server.txt CODEX_PLUS_SHARE.zh-CN.md SERVER_ACCOUNT_MANAGEMENT.zh-CN.md tests/test_codex_plus_share.py
@@ -319,7 +321,7 @@ git commit -m "feat: avoid accounts with blocked models"
 - Adds: authenticated `GET /v1/client/releases/latest`.
 - Adds: authenticated `GET /v1/client/releases/download/{filename}`.
 
-- [ ] **Step 1: Write failing deterministic manifest tests**
+- [x] **Step 1: Write failing deterministic manifest tests**
 
 ```python
 def test_manifest_records_literal_size_and_sha256(tmp_path):
@@ -333,31 +335,31 @@ def test_manifest_records_literal_size_and_sha256(tmp_path):
 
 Use the full precomputed SHA-256 literal in the test, not the production helper.
 
-- [ ] **Step 2: Run manifest tests and verify RED**
+- [x] **Step 2: Run manifest tests and verify RED**
 
 Run: `python -m pytest -q tests/test_release_manifest.py`
 
 Expected: import failure.
 
-- [ ] **Step 3: Implement deterministic manifest builder and CLI**
+- [x] **Step 3: Implement deterministic manifest builder and CLI**
 
 Reject filenames containing `/`, `\\`, `..`, or not matching the exact v0.1.7 asset allowlist. Write `latest.json` atomically and emit no file content.
 
-- [ ] **Step 4: Write failing API security tests**
+- [x] **Step 4: Write failing API security tests**
 
 Use `TestClient`: unauthenticated calls return 401; a valid device token gets the manifest; traversal and unlisted files return 404; tampered size/hash returns 503; valid download bytes and headers match.
 
-- [ ] **Step 5: Run API tests and verify RED**
+- [x] **Step 5: Run API tests and verify RED**
 
 Run: `python -m pytest -q tests/test_codex_plus_share.py -k 'client_release'`
 
 Expected: routes return 404.
 
-- [ ] **Step 6: Implement the two routes and install layout**
+- [x] **Step 6: Implement the two routes and install layout**
 
 Use `Depends(require_device)`, parse and validate `latest.json` for every request, resolve the candidate path and assert `candidate.parent == release_dir.resolve()`, then use `FileResponse`. `install-server.sh` creates the release directory but never deletes existing assets or overwrites `latest.json`.
 
-- [ ] **Step 7: Run focused tests and commit**
+- [x] **Step 7: Run focused tests and commit**
 
 Run: `python -m pytest -q tests/test_release_manifest.py tests/test_codex_plus_share.py tests/test_build_server_package.py`
 
@@ -388,11 +390,11 @@ git commit -m "feat: serve authenticated client releases"
 - Adds: `Launch-CwsCodex.ps1 -StatusOnly`.
 - Update source result shape: `{ source, version, name, size, sha256, download_url, headers }`.
 
-- [ ] **Step 1: Write the failing real PowerShell runtime tests**
+- [x] **Step 1: Write the failing real PowerShell runtime tests**
 
 Use `unittest` and `subprocess.run` to execute PowerShell. One test creates a minimal config with `client_version=0.1.6`, invokes launcher `-StatusOnly`, expects exit 0 and `CWS Codex 员工端 v0.1.6`, and asserts no launch/sync logs are created. A second sets TLS 1.1, dot-sources Common, calls `Enable-CwsTls12`, and asserts both TLS 1.1 and TLS 1.2 flags remain.
 
-- [ ] **Step 2: Run runtime tests and verify RED safely**
+- [x] **Step 2: Run runtime tests and verify RED safely**
 
 Run only the TLS test first, then the launcher test with a 10-second subprocess timeout:
 
@@ -402,25 +404,25 @@ Run only the TLS test first, then the launcher test with a 10-second subprocess 
 
 Expected: missing function and unrecognized `-StatusOnly`; terminate on timeout and confirm no VS Code child was launched before continuing.
 
-- [ ] **Step 3: Implement TLS and status-only mode**
+- [x] **Step 3: Implement TLS and status-only mode**
 
 `Enable-CwsTls12` ORs `[Net.SecurityProtocolType]::Tls12` into the current value. Launcher loads config, prints the version, and returns immediately on `-StatusOnly` before updater, extension, sync, VS Code, or watcher logic.
 
-- [ ] **Step 4: Write failing dual-source selection tests**
+- [x] **Step 4: Write failing dual-source selection tests**
 
 Dot-source updater in library mode and inject two fetch scriptblocks. Assert Broker success prevents GitHub invocation; Broker failure invokes GitHub; both failures return a combined error; Broker metadata creates an Authorization header while GitHub does not. Use complete literal release objects.
 
-- [ ] **Step 5: Run selection tests and verify RED**
+- [x] **Step 5: Run selection tests and verify RED**
 
 Run: `python -m unittest -v tests.test_windows_update_runtime`
 
 Expected: missing dual-source functions.
 
-- [ ] **Step 6: Implement server-first update checks**
+- [x] **Step 6: Implement server-first update checks**
 
 Read the DPAPI token through existing Common functions; request `$Config.broker_url/v1/client/releases/latest` through configured proxy; validate semantic version, exact installer name, size, SHA-256, and same-origin server download URL. On any Broker exception, log/show the reason and fetch GitHub after calling `Enable-CwsTls12`. Remove the old 24-hour early return for Broker checks. Preserve the existing confirmation and `/S /AUTOUPDATE` behavior.
 
-- [ ] **Step 7: Run Windows tests and parser checks**
+- [x] **Step 7: Run Windows tests and parser checks**
 
 Run:
 
@@ -432,7 +434,7 @@ $errors=@(); Get-ChildItem windows-client -Filter *.ps1 | % { [void][Management.
 
 Expected: all tests pass and parser errors are empty.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add windows-client/Common-CwsCodex.ps1 windows-client/Launch-CwsCodex.ps1 windows-client/Update-CwsCodex.ps1 windows-client/README-Windows.txt windows-client/使用说明.txt tests/test_windows_update_runtime.py tests/test_windows_client_bundle.py
@@ -453,21 +455,21 @@ git commit -m "feat: add Broker-first Windows updates"
 - Produces: `github_release_candidate(config) -> dict[str, Any]`
 - Produces: `select_release_candidate(config, device_token) -> dict[str, Any]`.
 
-- [ ] **Step 1: Write failing fallback tests**
+- [x] **Step 1: Write failing fallback tests**
 
 Monkeypatch the network boundary, not selection logic. Test Broker success skips GitHub; Broker error calls GitHub; both failures raise a combined Chinese diagnostic; server download includes Bearer auth; hash mismatch prevents installer execution.
 
-- [ ] **Step 2: Run Linux tests and verify RED**
+- [x] **Step 2: Run Linux tests and verify RED**
 
 Run: `python -m pytest -q tests/test_linux_client.py -k 'broker_release or update_fallback or hash_mismatch'`
 
 Expected: missing functions/incorrect GitHub-only behavior.
 
-- [ ] **Step 3: Implement Broker-first selection and authenticated download**
+- [x] **Step 3: Implement Broker-first selection and authenticated download**
 
 Reuse `request_json`/proxy behavior, validate same-origin Broker URL and exact Linux archive name, print current/source/latest versions, and retain GitHub URL allowlisting. Verify SHA-256 before opening the tar archive.
 
-- [ ] **Step 4: Run Linux tests and commit**
+- [x] **Step 4: Run Linux tests and commit**
 
 Run: `python -m pytest -q tests/test_linux_client.py`
 
@@ -508,19 +510,19 @@ git commit -m "feat: add Broker-first Linux updates"
 - Consumes all prior tasks.
 - Produces Git tag/Release `v0.1.7` and matching server mirror.
 
-- [ ] **Step 1: Update every release/version constant to 0.1.7**
+- [x] **Step 1: Update every release/version constant to 0.1.7**
 
 Use `rg -n '0\.1\.6'` and change only active version declarations, filenames, installer metadata, docs, and tests; retain historical changelog/release references when semantically historical.
 
-- [ ] **Step 2: Run the complete relevant suite**
+- [x] **Step 2: Run the complete relevant suite**
 
 Run all Broker, model health, manifest, Windows, Linux, installer, and build tests. Run Python compile checks, PowerShell parser checks, `git diff --check`, and archive secret scans. Expected: zero failures; documented platform-only skips are allowed.
 
-- [ ] **Step 3: Perform live protocol validation before deployment**
+- [x] **Step 3: Perform live protocol validation before deployment**
 
 Upload only a standalone probe script that imports the release candidate code without replacing the service. Against one known healthy account and `chatgpt024`, validate model discovery and one minimal response per discovered model. Confirm 024 returns a classified `server_overloaded`/capacity result and no tokens or response bodies print. If this check fails, stop deployment and revise the adapter/tests.
 
-- [ ] **Step 4: Build five artifacts and manifest**
+- [x] **Step 4: Build five artifacts and manifest**
 
 Build:
 
@@ -532,29 +534,29 @@ Build:
 
 Run `scripts/codex_release_manifest.py` with those exact names and a UTC published timestamp. Verify the recommended ZIP embeds the byte-identical installer and no archive contains runtime credentials.
 
-- [ ] **Step 5: Commit release artifacts**
+- [x] **Step 5: Commit release artifacts**
 
 ```bash
 git add README.md CODEX_PLUS_SHARE.zh-CN.md scripts windows-client linux-client windows-installer tests dist
 git commit -m "release: publish CWS Codex v0.1.7"
 ```
 
-- [ ] **Step 6: Back up and deploy Broker v0.1.7**
+- [x] **Step 6: Back up and deploy Broker v0.1.7**
 
 Back up `/opt/cws-codex`, `/etc/cws-codex/broker.env`, and the current systemd unit to `/var/backups/cws-codex/pre-v0.1.7-<UTC timestamp>`. Install code/pages, add explicit probe configuration, copy the five artifacts plus `latest.json` to the release directory, restart, then verify active status and loopback-only bind.
 
-- [ ] **Step 7: Verify production behavior**
+- [x] **Step 7: Verify production behavior**
 
 Check health, unauthorized release 401, authorized manifest/download hash, admin model status, and lease selection. Force a new lease from the test device and assert it does not select 024 while all 024 models are blocked.
 
-- [ ] **Step 8: Push, tag, and publish GitHub Release**
+- [x] **Step 8: Push, tag, and publish GitHub Release**
 
 Push `main`, create annotated `v0.1.7`, upload the five verified artifacts, and re-read the Release API to confirm every asset exists.
 
-- [ ] **Step 9: Bootstrap and verify this Windows client**
+- [x] **Step 9: Bootstrap and verify this Windows client**
 
 Run the v0.1.7 installer once with auto-update preservation. Confirm installed `config.json.client_version == 0.1.7`, `Launch-CwsCodex.ps1 -StatusOnly` displays v0.1.7, a forced check reads the server source, and normal launch synchronizes credentials without choosing a blocked account.
 
-- [ ] **Step 10: Final clean-state verification**
+- [x] **Step 10: Final clean-state verification**
 
 Confirm `git status --short --branch` is clean and aligned with `origin/main`; record commit SHA, release URL, artifact SHA-256 values, server backup path, probe summary, and local client result in the handoff.
