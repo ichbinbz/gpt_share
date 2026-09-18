@@ -280,6 +280,64 @@ def test_probe_model_refreshes_once_after_401_and_retries(tmp_path: Path):
     assert stored["last_refresh_reason"] == "model_probe_unauthorized"
 
 
+def test_discovery_refresh_updates_auth_snapshot_for_all_later_model_probes(tmp_path: Path):
+    old_access = jwt({"exp": 2_100_000_000})
+    new_access = jwt({"exp": 2_200_000_000})
+    payload = probe_auth_payload(old_access)
+    account = probe_account(tmp_path, payload)
+    codex_authorizations = []
+    refreshes = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal refreshes
+        if request.url.path == "/oauth/token":
+            refreshes += 1
+            return httpx.Response(
+                200,
+                json={"access_token": new_access, "refresh_token": "new-refresh"},
+            )
+        authorization = request.headers["authorization"]
+        codex_authorizations.append(authorization)
+        if request.url.path.endswith("/backend-api/codex/models"):
+            if authorization == f"Bearer {old_access}":
+                return httpx.Response(
+                    401,
+                    json={"error": {"code": "token_expired", "message": "Unauthorized"}},
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {"slug": "gpt-one", "supports_text": True, "available": True},
+                        {"slug": "gpt-two", "supports_text": True, "available": True},
+                    ]
+                },
+            )
+        return httpx.Response(200, json={"id": "resp-test", "status": "completed"})
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            models = await account.discover_models(client, payload, timeout=5)
+            results = [
+                await account.probe_model(client, payload, model, timeout=5)
+                for model in models
+            ]
+            return models, results
+
+    models, results = asyncio.run(run())
+
+    assert models == ["gpt-one", "gpt-two"]
+    assert all(result["status"] == "available" for result in results)
+    assert refreshes == 1
+    assert payload["tokens"]["access_token"] == new_access
+    assert codex_authorizations == [
+        f"Bearer {old_access}",
+        f"Bearer {new_access}",
+        f"Bearer {new_access}",
+        f"Bearer {new_access}",
+    ]
+
+
 def test_probe_model_timeout_is_a_transient_probe_error(tmp_path: Path):
     account = probe_account(tmp_path)
 
@@ -405,6 +463,71 @@ def test_probe_models_once_preserves_recent_known_good_on_transient_error(tmp_pa
     assert model["status"] == "available"
     assert model["available"] is True
     assert model["last_probe_error_at"] == 2_000.0
+
+
+def test_probe_models_once_marks_failed_oauth_refresh_auth_over_prior_healthy_state(
+    tmp_path: Path,
+):
+    old_access = jwt({"exp": 2_100_000_000})
+    account = probe_account(tmp_path, probe_auth_payload(old_access))
+    broker = probe_broker(tmp_path, {"account-test": account})
+    broker.model_health_store.replace_account(
+        "account-test",
+        {
+            "available": True,
+            "models": {
+                "gpt-text": {
+                    "status": "available",
+                    "available": True,
+                    "last_probe_at": 1_900.0,
+                }
+            },
+        },
+    )
+    refreshes = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal refreshes
+        if request.url.path == "/oauth/token":
+            refreshes += 1
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "code": "invalid_grant",
+                        "message": "Refresh token is revoked.",
+                        "type": "invalid_request_error",
+                        "param": None,
+                    }
+                },
+            )
+        if request.url.path.endswith("/backend-api/codex/models"):
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {"slug": "gpt-text", "supports_text": True, "available": True}
+                    ]
+                },
+            )
+        return httpx.Response(
+            401,
+            json={"error": {"code": "token_expired", "message": "Unauthorized"}},
+        )
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            broker.client = client
+            return await broker.probe_models_once(now=2_000.0)
+
+    state = asyncio.run(run())
+
+    model = state["accounts"]["account-test"]["models"]["gpt-text"]
+    assert refreshes == 1
+    assert model["status"] == "auth"
+    assert model["available"] is False
+    assert model["http_status"] == 400
+    assert model["error_code"] == "invalid_grant"
 
 
 def test_probe_models_once_does_not_overlap_slow_rounds(tmp_path: Path):

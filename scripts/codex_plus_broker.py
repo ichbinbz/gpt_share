@@ -661,6 +661,26 @@ class UsageQueryError(RuntimeError):
         super().__init__(f"usage query failed with HTTP {status_code}")
 
 
+class OAuthRefreshError(RuntimeError):
+    def __init__(self, status_code: int, error_code: str | None = None):
+        self.status_code = status_code
+        self.error_code = error_code
+        super().__init__(f"OAuth refresh failed with HTTP {status_code}")
+
+
+def _oauth_refresh_probe_result(exc: OAuthRefreshError) -> dict[str, Any]:
+    status = classify_probe_failure(exc.status_code, exc.error_code, None)
+    if status == "probe_error" and 400 <= exc.status_code < 500:
+        status = "auth"
+    return {
+        "status": status,
+        "available": None if status == "probe_error" else False,
+        "http_status": exc.status_code,
+        "error_code": exc.error_code or "oauth_refresh_failed",
+        "error_message": "OAuth refresh failed",
+    }
+
+
 class AccountRecord:
     def __init__(
         self,
@@ -724,7 +744,18 @@ class AccountRecord:
                 },
             )
             if response.status_code >= 400:
-                raise RuntimeError(f"OAuth refresh failed with HTTP {response.status_code}")
+                error_code = None
+                try:
+                    error_payload = response.json()
+                except (json.JSONDecodeError, ValueError):
+                    error_payload = None
+                if isinstance(error_payload, dict):
+                    error = error_payload.get("error")
+                    if isinstance(error, dict) and isinstance(error.get("code"), str):
+                        error_code = error["code"]
+                    elif isinstance(error, str):
+                        error_code = error
+                raise OAuthRefreshError(response.status_code, error_code)
             refreshed = response.json()
             for key in ("id_token", "access_token", "refresh_token"):
                 value = refreshed.get(key)
@@ -783,7 +814,10 @@ class AccountRecord:
             reason="model_probe_unauthorized",
             rejected_access_token=rejected_token,
         )
-        return await send(refreshed)
+        if refreshed is not payload:
+            payload.clear()
+            payload.update(refreshed)
+        return await send(payload)
 
     async def discover_models(
         self,
@@ -883,6 +917,8 @@ class AccountRecord:
                 "error_code": "timeout",
                 "error_message": "request timed out",
             }
+        except OAuthRefreshError as exc:
+            return _oauth_refresh_probe_result(exc)
         except (httpx.HTTPError, OSError, ValueError):
             return {
                 "status": "probe_error",
@@ -1059,16 +1095,20 @@ class TokenBroker:
                     previous_models = (
                         previous.get("models", {}) if isinstance(previous, dict) else {}
                     )
+                    auth_failure: dict[str, Any] | None = None
                     try:
                         auth = await account.ensure_fresh(
                             self.client, self.settings.refresh_window_seconds
                         )
+                    except OAuthRefreshError as exc:
+                        auth = None
+                        auth_failure = _oauth_refresh_probe_result(exc)
                     except Exception:
                         auth = None
 
                     discovery_source = "remote"
                     if auth is None:
-                        models = list(self.settings.model_fallbacks)
+                        models = list(self.settings.model_fallbacks) or list(previous_models)
                         discovery_source = "fallback"
                     else:
                         try:
@@ -1077,13 +1117,19 @@ class TokenBroker:
                                 auth,
                                 self.settings.model_probe_timeout_seconds,
                             )
+                        except OAuthRefreshError as exc:
+                            auth_failure = _oauth_refresh_probe_result(exc)
+                            models = list(self.settings.model_fallbacks) or list(previous_models)
+                            discovery_source = "fallback"
                         except Exception:
                             models = list(self.settings.model_fallbacks)
                             discovery_source = "fallback"
 
                     model_records: dict[str, dict[str, Any]] = {}
                     for model in dict.fromkeys(models):
-                        if auth is None:
+                        if auth_failure is not None:
+                            result = auth_failure
+                        elif auth is None:
                             result = {
                                 "status": "probe_error",
                                 "available": None,
