@@ -456,6 +456,7 @@ def test_discover_models_uses_oauth_headers_and_filters_codex_text_models(tmp_pa
         assert request.headers["authorization"].startswith("Bearer ")
         assert request.headers["chatgpt-account-id"] == "acct-test"
         assert request.headers["originator"] == "codex_cli_rs"
+        assert request.headers["accept"] == "application/json"
         return httpx.Response(
             200,
             json={
@@ -473,6 +474,30 @@ def test_discover_models_uses_oauth_headers_and_filters_codex_text_models(tmp_pa
             return await account.discover_models(client, probe_auth_payload(), timeout=5)
 
     assert asyncio.run(run()) == ["gpt-text"]
+
+
+def test_discover_models_total_timeout_covers_401_refresh(tmp_path: Path):
+    payload = probe_auth_payload()
+    account = probe_account(tmp_path, payload)
+    refresh_started = asyncio.Event()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth/token":
+            refresh_started.set()
+            await asyncio.sleep(60)
+            raise AssertionError("refresh unexpectedly completed")
+        return httpx.Response(401, json={"error": {"code": "token_expired"}})
+
+    async def run() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with pytest.raises(RuntimeError, match="model discovery timed out"):
+                await asyncio.wait_for(
+                    account.discover_models(client, payload, timeout=0.01),
+                    timeout=0.5,
+                )
+            assert refresh_started.is_set()
+
+    asyncio.run(run())
 
 
 def test_probe_model_sends_fixed_minimal_non_user_request(tmp_path: Path):
@@ -641,6 +666,41 @@ def test_probe_model_classifies_sse_error_event(tmp_path: Path):
     assert result["status"] == "quota"
     assert result["available"] is False
     assert result["error_code"] == "rate_limit_exceeded"
+    assert "response_body" not in result
+
+
+def test_probe_model_classifies_typed_response_failed_error(tmp_path: Path):
+    account = probe_account(tmp_path)
+    event = {
+        "type": "response.failed",
+        "response": {
+            "status": "failed",
+            "error": {
+                "code": "server_overloaded",
+                "message": "Selected model is at capacity. Please try a different model.",
+            },
+        },
+    }
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=f"data: {json.dumps(event)}\n\n",
+        )
+
+    async def run() -> dict:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await account.probe_model(client, probe_auth_payload(), "gpt-text", timeout=5)
+
+    result = asyncio.run(run())
+    assert result == {
+        "status": "capacity",
+        "available": False,
+        "http_status": 200,
+        "error_code": "server_overloaded",
+        "error_message": "Selected model is at capacity. Please try a different model.",
+    }
     assert "response_body" not in result
 
 

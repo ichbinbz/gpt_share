@@ -866,12 +866,15 @@ class AccountRecord:
     ) -> list[str]:
         """Discover supported Codex text models without retaining response content."""
         try:
-            response = await self._codex_request(
-                client,
-                payload,
-                "GET",
-                self._models_discovery_url(self.models_url),
-                timeout,
+            response = await asyncio.wait_for(
+                self._codex_request(
+                    client,
+                    payload,
+                    "GET",
+                    self._models_discovery_url(self.models_url),
+                    timeout,
+                ),
+                timeout=timeout,
             )
         except (asyncio.TimeoutError, httpx.TimeoutException) as exc:
             raise RuntimeError("model discovery timed out") from exc
