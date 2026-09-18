@@ -144,7 +144,7 @@ def test_linux_broker_release_candidate_uses_bearer_and_proxy(monkeypatch):
             {
                 "Accept": "application/json",
                 "Authorization": "Bearer cwsdt_test-token-long-enough-123456",
-                "User-Agent": "CWS-Codex-Linux/0.1.6",
+                "User-Agent": "CWS-Codex-Linux/0.1.7",
             },
             "http://proxy:8080",
             30,
@@ -249,7 +249,7 @@ def test_linux_update_hash_mismatch_skips_install_and_cleans_temp_directory(tmp_
         "size": len(archive_payload),
         "sha256": "0" * 64,
         "download_url": "https://broker.example.test/v1/client/releases/download/CWS-Codex-Linux-v0.1.7.tar.gz",
-        "headers": {"Authorization": "Bearer device-token", "User-Agent": "CWS-Codex-Linux/0.1.6"},
+        "headers": {"Authorization": "Bearer device-token", "User-Agent": "CWS-Codex-Linux/0.1.7"},
     }
     created = []
     real_mkdtemp = tempfile.mkdtemp
@@ -282,7 +282,7 @@ def test_linux_broker_download_uses_proxy_bearer_and_blocks_redirects(monkeypatc
         "size": len(archive_payload),
         "sha256": hashlib.sha256(archive_payload).hexdigest(),
         "download_url": "https://broker.example.test/v1/client/releases/download/CWS-Codex-Linux-v0.1.7.tar.gz",
-        "headers": {"Authorization": "Bearer device-token", "User-Agent": "CWS-Codex-Linux/0.1.6"},
+        "headers": {"Authorization": "Bearer device-token", "User-Agent": "CWS-Codex-Linux/0.1.7"},
     }
     observed = []
 

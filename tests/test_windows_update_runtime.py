@@ -118,7 +118,7 @@ class WindowsUpdateRuntimeTests(unittest.TestCase):
             config_path.write_text(
                 json.dumps(
                     {
-                        "client_version": "0.1.6",
+                        "client_version": "0.1.7",
                         "client_home": str(fixture / "client-home"),
                         "codex_home": str(fixture / "codex-home"),
                         "vscode_path": str(fake_vscode),
@@ -148,7 +148,7 @@ class WindowsUpdateRuntimeTests(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("CWS Codex 员工端 v0.1.6", result.stdout)
+            self.assertIn("CWS Codex 员工端 v0.1.7", result.stdout)
             self.assertEqual(
                 [name for name, marker in markers.items() if marker.exists()],
                 [],

@@ -9,13 +9,14 @@ import tarfile
 from pathlib import Path, PurePosixPath
 
 
-VERSION = "0.1.6"
+VERSION = "0.1.7"
 ARCHIVE_ROOT = f"CWS-Codex-Server-v{VERSION}"
 PACKAGE_FILES = {
     Path("server-package/README-Server.txt"): Path("README-Server.txt"),
     Path("server-package/install-server.sh"): Path("install-server.sh"),
     Path("server-package/requirements-server.txt"): Path("requirements-server.txt"),
     Path("scripts/codex_plus_broker.py"): Path("codex_plus_broker.py"),
+    Path("scripts/codex_live_probe.py"): Path("codex_live_probe.py"),
     Path("scripts/codex_model_health.py"): Path("codex_model_health.py"),
     Path("scripts/codex_release_manifest.py"): Path("codex_release_manifest.py"),
     Path("scripts/codex_device_tokens.py"): Path("codex_device_tokens.py"),

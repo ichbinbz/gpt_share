@@ -24,6 +24,7 @@ def test_server_release_archive_contains_only_deployment_material(tmp_path: Path
     assert not any(name.endswith("broker.env") for name in names)
     assert modes[str(PurePosixPath(ARCHIVE_ROOT, "install-server.sh"))] == 0o755
     assert modes[str(PurePosixPath(ARCHIVE_ROOT, "codex_plus_broker.py"))] == 0o755
+    assert modes[str(PurePosixPath(ARCHIVE_ROOT, "codex_live_probe.py"))] == 0o755
     assert modes[str(PurePosixPath(ARCHIVE_ROOT, "codex_model_health.py"))] == 0o755
     assert modes[str(PurePosixPath(ARCHIVE_ROOT, "codex_release_manifest.py"))] == 0o755
     assert modes[str(PurePosixPath(ARCHIVE_ROOT, "README-Server.txt"))] == 0o644

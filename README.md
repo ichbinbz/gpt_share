@@ -17,8 +17,8 @@
 
 ## 当前版本
 
-- Windows / Ubuntu 员工端：`v0.1.6`
-- Codex Broker 服务端：`v0.1.6`
+- Windows / Ubuntu 员工端：`v0.1.7`
+- Codex Broker 服务端：`v0.1.7`
 
 ## 主要功能
 
@@ -38,11 +38,11 @@
 
 | 文件 | 用途 |
 | --- | --- |
-| `CWS-Codex-Release-v0.1.6.zip` | Windows 推荐分发包，包含图形安装器和简明使用说明 |
-| `CWS-Codex-Setup-v0.1.6.exe` | Windows 员工端安装器，启动时可从 GitHub Release 自动更新 |
-| `CWS-Codex-Windows-v0.1.6.zip` | Windows 脚本版及故障排查备用包 |
-| `CWS-Codex-Linux-v0.1.6.tar.gz` | Ubuntu/Linux 员工端，支持图形更新提示 |
-| `CWS-Codex-Server-v0.1.6.tar.gz` | Codex Broker 服务端部署包，支持官方提前失效令牌自动刷新、令牌状态展示，并兼容旧客户端 |
+| `CWS-Codex-Release-v0.1.7.zip` | Windows 推荐分发包，包含图形安装器和简明使用说明 |
+| `CWS-Codex-Setup-v0.1.7.exe` | Windows 员工端安装器，启动时可从 GitHub Release 自动更新 |
+| `CWS-Codex-Windows-v0.1.7.zip` | Windows 脚本版及故障排查备用包 |
+| `CWS-Codex-Linux-v0.1.7.tar.gz` | Ubuntu/Linux 员工端，支持图形更新提示 |
+| `CWS-Codex-Server-v0.1.7.tar.gz` | Codex Broker 服务端部署包，支持模型容量健康探测、服务器优先客户端更新，并兼容旧客户端 |
 
 Windows 员工通常只需解压 Release 包、双击安装器并填写管理员分配的设备令牌。Linux 员工端解压后以普通用户运行 `./install.sh`。
 Windows 安装阶段不会调用或等待 VS Code；首次点击公司快捷方式时才执行最长 30 秒的扩展检查。

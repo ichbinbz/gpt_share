@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="0.1.6"
+VERSION="0.1.7"
 BROKER_URL="http://codex.cws.internal:8765"
 PROXY_URL="http://192.168.2.38:7897"
 CODEX_HOME="${HOME}/.codex"
