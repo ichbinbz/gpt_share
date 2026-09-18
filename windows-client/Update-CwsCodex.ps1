@@ -201,6 +201,7 @@ function Get-CwsUpdateCandidate {
             Headers            = $BrokerHeaders
             TimeoutSec         = 30
             MaximumRedirection = 0
+            DisableKeepAlive   = $true
         }
         $ProxyUrl = [string] $Config.proxy_url
         if ($ProxyUrl) { $BrokerRequest.Proxy = $ProxyUrl }

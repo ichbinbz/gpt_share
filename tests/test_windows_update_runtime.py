@@ -32,7 +32,8 @@ function Get-CwsDeviceToken {
 function Write-CwsJsonAtomic { param($Path, $Value) }
 function Enable-CwsTls12 { }
 function Invoke-RestMethod {
-    param($Uri, $Headers, $TimeoutSec, $MaximumRedirection)
+    param($Uri, $Headers, $TimeoutSec, $MaximumRedirection, $DisableKeepAlive)
+    if (-not $DisableKeepAlive) { throw "Broker update connection must close before credential sync" }
     if ($Uri -notlike "*/v1/client/releases/latest") { throw "Unexpected GitHub fallback" }
     [pscustomobject]@{
         release_version="0.1.7"; published_at="2026-09-18T00:00:00Z";
