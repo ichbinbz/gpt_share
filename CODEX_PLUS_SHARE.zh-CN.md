@@ -46,6 +46,24 @@ python scripts/codex_plus_broker.py
 
 额度来自官方 Codex usage 接口。调度分数以主窗口和次窗口中较高的 `used_percent` 为基础，并对当前活跃租约增加惩罚，优先分配余量较多、负载较低的账号。
 
+Broker 还会每 15 分钟探测各账号的 Codex 文本模型。若一个账号的所有已支持模型都明确处于阻塞状态，
+新租约会避开该账号；探测异常或未知不会误伤可用账号。模型“容量超限”默认冷却 30 分钟后再探测。
+状态文件只保留模型名称、状态、时间、冷却和截断后的错误摘要，不保存请求正文、响应正文或 OAuth 凭据。
+
+模型探测可在服务端环境中配置：
+
+```bash
+CWS_CODEX_MODEL_PROBE_INTERVAL_SECONDS=900    # 每 15 分钟
+CWS_CODEX_MODEL_COOLDOWN_SECONDS=1800         # 容量超限后 30 分钟
+CWS_CODEX_MODEL_PROBE_CONCURRENCY=2
+CWS_CODEX_MODEL_PROBE_TIMEOUT_SECONDS=45
+CWS_CODEX_MODEL_FALLBACKS='gpt-5.2-codex,gpt-5.1-codex'
+CWS_CODEX_MODEL_HEALTH_FILE='/var/lib/cws-codex/model-health.json'
+```
+
+额度页面会显示：`模型可用`、`容量超限`、`额度耗尽`、`鉴权失败`、`不支持`、`探测异常`、`探测未知`。
+前三类中的容量、额度和鉴权阻塞会影响新租约；“不支持”不计为可探测模型，“探测异常”和“探测未知”保守地保留为调度候选。
+
 管理员可通过 `http://codex.cws.internal:8765/quota` 打开独立管理页面，或在 CWS 管理后台的
 “系统管理”页面查看账号额度和按员工令牌归属的 Token 使用量。独立页面仅能通过当前内网代理/VLESS 访问。
 

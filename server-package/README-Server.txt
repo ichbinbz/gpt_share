@@ -75,3 +75,16 @@ CWS Codex Linux 服务端部署包
 - 默认每个设备最多连续使用同一账号 24 小时，之后重新参与调度。
 - 可在 /etc/cws-codex/broker.env 中通过 CWS_CODEX_LEASE_ROTATION_SECONDS 调整，默认 86400。
 - 同等额度可用性下优先选择活动租约较少的账号，再比较额度重置时间和剩余额度。
+- Broker 每 15 分钟探测一次每个账号的 Codex 文本模型；某模型“容量超限”后默认冷却 30 分钟。
+  新租约会避开所有已知可用模型均被阻塞的账号；探测未知时不会排除账号。
+
+模型健康探测配置（写入 /etc/cws-codex/broker.env 后重启服务）：
+- CWS_CODEX_MODEL_PROBE_INTERVAL_SECONDS：探测间隔，默认 900（15 分钟）。
+- CWS_CODEX_MODEL_COOLDOWN_SECONDS：容量超限后的冷却时间，默认 1800（30 分钟）。
+- CWS_CODEX_MODEL_PROBE_CONCURRENCY：同时探测的账号数，默认 2。
+- CWS_CODEX_MODEL_PROBE_TIMEOUT_SECONDS：单次模型探测超时，默认 45 秒。
+- CWS_CODEX_MODEL_FALLBACKS：模型发现失败时逗号分隔的回退模型列表。
+- CWS_CODEX_MODEL_HEALTH_FILE：仅保存非敏感探测摘要的状态文件，默认 /var/lib/cws-codex/model-health.json。
+
+额度页面的模型健康状态含义：模型可用、容量超限、额度耗尽、鉴权失败、不支持、探测异常、探测未知。
+其中容量超限会在冷却结束后重新探测；额度耗尽和鉴权失败会阻止调度；探测异常或未知不自动排除账号。

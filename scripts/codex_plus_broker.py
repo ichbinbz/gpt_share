@@ -1054,6 +1054,54 @@ def account_selection_key(
     return (capacity_band, max(0, active_leases), expiry_ratio, -effective_remaining)
 
 
+def _model_health_number(value: Any) -> int | float | None:
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def sanitized_model_health(record: dict[str, Any] | None, now: float) -> dict[str, Any]:
+    """Project persistent probe state into the small, non-secret admin contract."""
+    record = record if isinstance(record, dict) else {}
+    result: dict[str, Any] = {
+        "available": account_probe_available(record, now),
+        "models": [],
+    }
+    for field in ("last_probe_at", "next_probe_at"):
+        value = _model_health_number(record.get(field))
+        if value is not None:
+            result[field] = value
+
+    models = record.get("models")
+    if not isinstance(models, dict):
+        return result
+    allowed_statuses = {"available", "capacity", "quota", "auth", "unsupported", "probe_error"}
+    for name in sorted(name for name in models if isinstance(name, str) and name):
+        model = models[name]
+        if not isinstance(model, dict):
+            continue
+        status = model.get("status")
+        availability = model.get("available")
+        item: dict[str, Any] = {
+            "name": name,
+            "status": status if status in allowed_statuses else "probe_error",
+            "available": availability if availability is True or availability is False or availability is None else None,
+        }
+        for field in ("last_probe_at", "last_probe_error_at", "cooldown_until"):
+            value = _model_health_number(model.get(field))
+            if value is not None:
+                item[field] = value
+        http_status = model.get("http_status")
+        if isinstance(http_status, int) and not isinstance(http_status, bool):
+            item["http_status"] = http_status
+        error_code = model.get("error_code")
+        if isinstance(error_code, str):
+            item["error_code"] = error_code[:120]
+        error_message = model.get("error_message")
+        if isinstance(error_message, str):
+            item["error_message"] = error_message[:500]
+        result["models"].append(item)
+    return result
+
+
 class TokenBroker:
     def __init__(self, settings: BrokerSettings, client: httpx.AsyncClient | None = None):
         self.settings = settings
@@ -1232,6 +1280,16 @@ class TokenBroker:
         async with self.state_lock:
             state = self._load_state()
             leases = state.setdefault("leases", {})
+            health_store = getattr(self, "model_health_store", None)
+            health_snapshot = health_store.load() if health_store is not None else {"accounts": {}}
+            health_accounts = health_snapshot.get("accounts", {})
+            if not isinstance(health_accounts, dict):
+                health_accounts = {}
+
+            def probe_available(alias: str) -> bool | None:
+                record = health_accounts.get(alias)
+                return account_probe_available(record if isinstance(record, dict) else None, now)
+
             for lease_id, lease in list(leases.items()):
                 if not isinstance(lease, dict) or int(lease.get("expires_at", 0)) <= now:
                     leases.pop(lease_id, None)
@@ -1255,6 +1313,10 @@ class TokenBroker:
             alias = existing.get("account_alias") if isinstance(existing, dict) else None
             if alias not in self.accounts:
                 alias = None
+            elif probe_available(alias) is False:
+                leases.pop(str(requested_lease_id), None)
+                existing = None
+                alias = None
 
             snapshots: dict[str, tuple[dict[str, Any], dict[str, Any] | None]] = {}
             if alias is None:
@@ -1263,7 +1325,11 @@ class TokenBroker:
                     leased_alias = lease.get("account_alias") if isinstance(lease, dict) else None
                     if leased_alias in active_counts:
                         active_counts[leased_alias] += 1
-                for name, account in self.accounts.items():
+                candidates = [name for name in self.accounts if probe_available(name) is not False]
+                if not candidates:
+                    raise HTTPException(status_code=503, detail="all Codex accounts have blocked models")
+                for name in candidates:
+                    account = self.accounts[name]
                     try:
                         snapshots[name] = await self._account_snapshot(account)
                     except Exception:
@@ -1320,6 +1386,11 @@ class TokenBroker:
     async def account_status(self, refresh_usage: bool = False) -> list[dict[str, Any]]:
         state = self._load_state()
         now = time.time()
+        health_store = getattr(self, "model_health_store", None)
+        health_snapshot = health_store.load() if health_store is not None else {"accounts": {}}
+        health_accounts = health_snapshot.get("accounts", {})
+        if not isinstance(health_accounts, dict):
+            health_accounts = {}
         active_counts: Counter[str] = Counter(
             lease.get("account_alias")
             for lease in state.get("leases", {}).values()
@@ -1349,6 +1420,10 @@ class TokenBroker:
                         "usage_score": usage_score(usage),
                         "active_leases": active_counts.get(alias, 0),
                         "usage": usage,
+                        "model_health": sanitized_model_health(
+                            health_accounts.get(alias) if isinstance(health_accounts.get(alias), dict) else None,
+                            now,
+                        ),
                     }
                 )
             except Exception as exc:
@@ -1356,6 +1431,10 @@ class TokenBroker:
                     "alias": alias,
                     "available": False,
                     "error": str(exc),
+                    "model_health": sanitized_model_health(
+                        health_accounts.get(alias) if isinstance(health_accounts.get(alias), dict) else None,
+                        now,
+                    ),
                 }
                 try:
                     auth = account.read_auth()

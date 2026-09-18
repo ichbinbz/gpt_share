@@ -1,5 +1,6 @@
 import base64
 import asyncio
+import hashlib
 import json
 import os
 import subprocess
@@ -820,6 +821,212 @@ def test_account_selection_penalizes_active_leases_for_equal_allowance():
     assert account_selection_key(usage, 0) < account_selection_key(usage, 2)
 
 
+def health_aware_broker(now: int, state: dict, health_accounts: dict) -> TokenBroker:
+    """Build a real lease broker around deterministic account/health snapshots."""
+    broker = TokenBroker.__new__(TokenBroker)
+    broker.settings = SimpleNamespace(
+        lease_seconds=28_800,
+        lease_rotation_seconds=86_400,
+    )
+    broker.accounts = {"chatgpt010": "ten", "chatgpt024": "twenty-four"}
+    broker.state_lock = asyncio.Lock()
+    broker._load_state = lambda: state
+    broker._save_state = lambda value: state.update(value)
+    broker.model_health_store = SimpleNamespace(
+        load=lambda: {"version": 1, "accounts": health_accounts}
+    )
+
+    async def snapshot(account):
+        account_id = "acct-ten" if account == "ten" else "acct-twenty-four"
+        access_token = jwt(
+            {
+                "exp": now + 3600,
+                "https://api.openai.com/auth": {"chatgpt_account_id": account_id},
+            }
+        )
+        used = 50 if account == "ten" else 1
+        return {"tokens": {"access_token": access_token}}, {
+            "rate_limit": {"primary_window": {"used_percent": used, "reset_after_seconds": 3600}}
+        }
+
+    broker._account_snapshot = snapshot
+    return broker
+
+
+def test_new_lease_excludes_account_when_all_models_are_blocked(monkeypatch):
+    now = 2_000_000_000
+    broker = health_aware_broker(
+        now,
+        {"leases": {}},
+        {
+            "chatgpt010": {"models": {"gpt-test": {"status": "available", "available": True}}},
+            "chatgpt024": {
+                "models": {
+                    "gpt-test": {
+                        "status": "capacity",
+                        "available": False,
+                        "cooldown_until": now + 1800,
+                    }
+                }
+            },
+        },
+    )
+    monkeypatch.setattr("scripts.codex_plus_broker.time.time", lambda: now)
+
+    result = asyncio.run(broker.lease(DeviceIdentity(token_id="device-a", label="employee-a"), "pc", None))
+
+    assert result["account_alias"] == "chatgpt010"
+
+
+def test_probe_unknown_does_not_exclude_an_account(monkeypatch):
+    now = 2_000_000_000
+    broker = health_aware_broker(
+        now,
+        {"leases": {}},
+        {
+            "chatgpt010": {"models": {"gpt-test": {"status": "probe_error", "available": None}}},
+            "chatgpt024": {
+                "models": {
+                    "gpt-test": {
+                        "status": "capacity",
+                        "available": False,
+                        "cooldown_until": now + 1800,
+                    }
+                }
+            },
+        },
+    )
+    monkeypatch.setattr("scripts.codex_plus_broker.time.time", lambda: now)
+
+    result = asyncio.run(broker.lease(DeviceIdentity(token_id="device-a", label="employee-a"), "pc", None))
+
+    assert result["account_alias"] == "chatgpt010"
+
+
+def test_existing_affinity_is_dropped_when_account_becomes_blocked(monkeypatch):
+    now = 2_000_000_000
+    device_hash = hashlib.sha256(b"pc").hexdigest()
+    state = {
+        "leases": {
+            "old-024-lease": {
+                "account_alias": "chatgpt024",
+                "device_token_id": "device-a",
+                "client_device_hash": device_hash,
+                "created_at": now,
+                "expires_at": now + 100,
+            }
+        }
+    }
+    broker = health_aware_broker(
+        now,
+        state,
+        {
+            "chatgpt010": {"models": {"gpt-test": {"status": "available", "available": True}}},
+            "chatgpt024": {
+                "models": {
+                    "gpt-test": {
+                        "status": "capacity",
+                        "available": False,
+                        "cooldown_until": now + 1800,
+                    }
+                }
+            },
+        },
+    )
+    monkeypatch.setattr("scripts.codex_plus_broker.time.time", lambda: now)
+
+    result = asyncio.run(
+        broker.lease(DeviceIdentity(token_id="device-a", label="employee-a"), "pc", "old-024-lease")
+    )
+
+    assert result["lease_id"] != "old-024-lease"
+    assert result["account_alias"] == "chatgpt010"
+    assert "old-024-lease" not in state["leases"]
+
+
+def test_lease_returns_sanitized_503_when_every_account_is_explicitly_blocked(monkeypatch):
+    now = 2_000_000_000
+    broker = health_aware_broker(
+        now,
+        {"leases": {}},
+        {
+            alias: {"models": {"gpt-test": {"status": "quota", "available": False}}}
+            for alias in ("chatgpt010", "chatgpt024")
+        },
+    )
+    monkeypatch.setattr("scripts.codex_plus_broker.time.time", lambda: now)
+
+    with pytest.raises(broker_module.HTTPException) as exc_info:
+        asyncio.run(broker.lease(DeviceIdentity(token_id="device-a", label="employee-a"), "pc", None))
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "all Codex accounts have blocked models"
+
+
+def test_admin_account_status_exposes_only_sanitized_model_health(monkeypatch):
+    now = 2_000_000_000
+    broker = health_aware_broker(
+        now,
+        {"leases": {}},
+        {
+            "chatgpt010": {
+                "models": {
+                    "gpt-test": {
+                        "status": "capacity",
+                        "available": False,
+                        "last_probe_at": now - 60,
+                        "last_probe_error_at": now - 55,
+                        "cooldown_until": now + 1800,
+                        "http_status": 503,
+                        "error_code": "server_overloaded",
+                        "error_message": "x" * 600,
+                        "access_token": "must-not-leak",
+                        "refresh_token": "must-not-leak",
+                        "authorization": "Bearer must-not-leak",
+                        "request_body": "must-not-leak",
+                        "probe_response_body": "must-not-leak",
+                    }
+                }
+            }
+        },
+    )
+    broker.accounts = {"chatgpt010": "ten"}
+    monkeypatch.setattr("scripts.codex_plus_broker.time.time", lambda: now)
+    monkeypatch.setattr(broker_module, "broker", broker)
+    monkeypatch.setattr(
+        broker_module,
+        "settings",
+        SimpleNamespace(admin_token="admin-token-that-is-longer-than-thirty-two-characters"),
+    )
+
+    response = TestClient(broker_module.app).get(
+        "/v1/admin/accounts",
+        headers={"Authorization": "Bearer admin-token-that-is-longer-than-thirty-two-characters"},
+    )
+
+    assert response.status_code == 200, response.text
+    health = response.json()["accounts"][0]["model_health"]
+    assert health == {
+        "available": False,
+        "models": [
+            {
+                "name": "gpt-test",
+                "status": "capacity",
+                "available": False,
+                "last_probe_at": now - 60,
+                "last_probe_error_at": now - 55,
+                "cooldown_until": now + 1800,
+                "http_status": 503,
+                "error_code": "server_overloaded",
+                "error_message": "x" * 500,
+            }
+        ],
+    }
+    rendered = response.text
+    for secret_field in ("access_token", "refresh_token", "authorization", "request_body", "probe_response_body"):
+        assert secret_field not in rendered
+
+
 def test_lease_rotation_rebalances_after_24_hours(monkeypatch):
     now = 2_000_000_000
     broker = TokenBroker.__new__(TokenBroker)
@@ -938,6 +1145,17 @@ def test_quota_dashboard_keeps_admin_token_in_tab_session_only():
     assert 'id="brokerVersion"' in dashboard
     assert 'id="onlyActive"' in dashboard
     assert "hasActivity" in dashboard
+
+
+def test_quota_dashboard_renders_sanitized_model_health_through_safe_dom_nodes():
+    dashboard = (Path(__file__).parents[1] / "scripts" / "codex_quota_dashboard.html").read_text(encoding="utf-8")
+
+    assert "model_health" in dashboard
+    assert "renderModelHealth" in dashboard
+    for label in ("模型可用", "容量超限", "额度耗尽", "鉴权失败", "不支持", "探测异常", "探测未知"):
+        assert label in dashboard
+    assert "innerHTML" not in dashboard
+    assert "el.textContent=esc(text)" in dashboard
 
 
 def test_empty_account_status_can_count_active_leases():

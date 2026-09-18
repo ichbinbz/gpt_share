@@ -195,6 +195,24 @@ unset CWS_CODEX_ADMIN_TOKEN
 - `access_token_expires_at`：官方访问令牌 JWT 声明的到期时间（Unix 时间戳），不是 ChatGPT 订阅到期日。
 - `token_refresh_required`：令牌是否已经进入服务端配置的刷新窗口，或刚被官方接口提前判定失效。
 - `last_token_refresh_at`、`last_token_refresh_reason`：服务端最近一次刷新时间及原因。
+- `model_health`：仅包含非敏感的模型探测摘要：模型名、状态、可用性、探测时间、冷却时间和截断后的错误元数据；
+  不包含 OAuth 凭据、Authorization、探测请求正文或响应正文。
+
+模型健康探测默认每 15 分钟运行一次；“容量超限”默认冷却 30 分钟后重新探测。可在 Broker 的
+`/etc/cws-codex/broker.env` 设置以下六个变量后重启服务：
+
+```bash
+CWS_CODEX_MODEL_PROBE_INTERVAL_SECONDS=900
+CWS_CODEX_MODEL_COOLDOWN_SECONDS=1800
+CWS_CODEX_MODEL_PROBE_CONCURRENCY=2
+CWS_CODEX_MODEL_PROBE_TIMEOUT_SECONDS=45
+CWS_CODEX_MODEL_FALLBACKS='gpt-5.2-codex,gpt-5.1-codex'
+CWS_CODEX_MODEL_HEALTH_FILE='/var/lib/cws-codex/model-health.json'
+```
+
+状态含义为：`模型可用`（可调度）、`容量超限`（冷却期间不调度）、`额度耗尽`（不调度）、
+`鉴权失败`（不调度并需要检查重新登录）、`不支持`（不作为受支持模型）、`探测异常`、`探测未知`。
+只有所有受支持模型均被明确阻塞时，账号才会从新租约候选中移除；异常或未知会保留候选资格。
 
 Broker 除了在令牌临近 JWT 到期时自动刷新，还会在官方额度接口提前返回 HTTP 401 时立即强制刷新，
 原子写回新凭据并重试一次。这样可处理 JWT `exp` 尚未到期、但官方已提前撤销访问令牌的情况。
