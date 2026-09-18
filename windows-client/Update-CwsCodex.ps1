@@ -128,10 +128,13 @@ function ConvertTo-CwsGithubCandidate {
         [Parameter(Mandatory = $true)] $Headers
     )
 
-    $Tag = ([string] $Release.tag_name).Trim().TrimStart("v")
+    $Tag = ([string] $Release.tag_name).Trim()
+    if ($Tag.StartsWith("v", [StringComparison]::Ordinal)) {
+        $Tag = $Tag.Substring(1)
+    }
     $LatestVersion = ConvertTo-CwsSemanticVersion -Value $Tag
     $AssetName = "CWS-Codex-Setup-v$LatestVersion.exe"
-    $Asset = @($Release.assets | Where-Object { $_.name -eq $AssetName }) | Select-Object -First 1
+    $Asset = @($Release.assets | Where-Object { [string] $_.name -ceq $AssetName }) | Select-Object -First 1
     if (-not $Asset) {
         throw "GitHub Release 缺少 Windows 安装器：$AssetName"
     }
@@ -147,6 +150,7 @@ function ConvertTo-CwsGithubCandidate {
         throw "GitHub Release 下载地址无效。"
     }
     if ($DownloadUri.Scheme -ne "https" -or $DownloadUri.Host -ne "github.com" -or
+        $DownloadUri.Port -ne 443 -or $DownloadUri.UserInfo -or
         -not $DownloadUri.AbsolutePath.StartsWith("/$Repository/releases/download/")) {
         throw "GitHub Release 下载地址未通过安全检查。"
     }
@@ -154,7 +158,7 @@ function ConvertTo-CwsGithubCandidate {
     return [pscustomobject] [ordered] @{
         source       = "GitHub"
         version      = $LatestVersion.ToString()
-        name         = $AssetName
+        name         = [string] $Asset.name
         size         = $Size
         sha256       = $Digest.Substring(7)
         download_url = $DownloadUri.AbsoluteUri
@@ -172,6 +176,7 @@ function Get-CwsUpdateCandidate {
         [scriptblock] $GithubFetch = { param($Request) Invoke-RestMethod @Request }
     )
 
+    $script:CwsUpdateFallbackReason = $null
     $DeviceToken = $null
     $BrokerReason = $null
     try {
@@ -192,9 +197,10 @@ function Get-CwsUpdateCandidate {
             "User-Agent" = "CWS-Codex-Windows/$CurrentVersion"
         }
         $BrokerRequest = @{
-            Uri        = $BrokerBase + "/v1/client/releases/latest"
-            Headers    = $BrokerHeaders
-            TimeoutSec = 30
+            Uri                = $BrokerBase + "/v1/client/releases/latest"
+            Headers            = $BrokerHeaders
+            TimeoutSec         = 30
+            MaximumRedirection = 0
         }
         $ProxyUrl = [string] $Config.proxy_url
         if ($ProxyUrl) { $BrokerRequest.Proxy = $ProxyUrl }
@@ -246,9 +252,12 @@ function Install-CwsUpdateCandidate {
         Headers    = $Candidate.headers
         TimeoutSec = 180
     }
+    if ([string] $Candidate.source -ceq "Broker") {
+        $Download.MaximumRedirection = 0
+    }
     if ($ProxyUrl) { $Download.Proxy = $ProxyUrl }
-    & $DownloadFetch $Download
     try {
+        & $DownloadFetch $Download
         $ActualSize = (Get-Item -LiteralPath $DownloadPath).Length
         if ($ActualSize -ne [long] $Candidate.size) {
             throw "下载文件 size 校验失败：期望 $($Candidate.size)，实际 $ActualSize。"

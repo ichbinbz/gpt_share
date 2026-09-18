@@ -449,6 +449,419 @@ class WindowsUpdateRuntimeTests(unittest.TestCase):
         self.assertFalse(payload["installer_started"])
         self.assertIn("sha-256", payload["error"].lower())
 
+    def test_broker_manifest_request_propagates_proxy_auth_and_disables_redirects(self):
+        result = self.run_update_library(
+            r"""
+            $Config = [pscustomobject]@{
+                broker_url = "https://broker.example.test"
+                proxy_url = "http://proxy.example.test:8080"
+            }
+            $script:ObservedRequest = $null
+            $TokenReader = { param($TokenPath) "device-secret" }
+            $BrokerFetch = {
+                param($Request)
+                $script:ObservedRequest = $Request
+                [pscustomobject]@{
+                    release_version = "0.1.7"
+                    published_at = "2026-09-18T00:00:00Z"
+                    assets = @([pscustomobject]@{
+                        platform = "windows-installer"
+                        name = "CWS-Codex-Setup-v0.1.7.exe"
+                        size = 9
+                        sha256 = "9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
+                        download_url = "/v1/client/releases/download/CWS-Codex-Setup-v0.1.7.exe"
+                    })
+                }
+            }
+            $GithubFetch = { param($Request) throw "GitHub must not be called" }
+            $Candidate = Get-CwsUpdateCandidate `
+                -Config $Config `
+                -CurrentVersion "0.1.6" `
+                -TokenPath "unused.dpapi" `
+                -TokenReader $TokenReader `
+                -BrokerFetch $BrokerFetch `
+                -GithubFetch $GithubFetch
+            [pscustomobject]@{
+                source = $Candidate.source
+                uri = [string] $script:ObservedRequest.Uri
+                proxy = [string] $script:ObservedRequest.Proxy
+                maximum_redirection = $script:ObservedRequest.MaximumRedirection
+                authorization = [string] $script:ObservedRequest.Headers.Authorization
+                user_agent = [string] $script:ObservedRequest.Headers."User-Agent"
+            } | ConvertTo-Json -Compress
+            """
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            json.loads(result.stdout.strip()),
+            {
+                "source": "Broker",
+                "uri": "https://broker.example.test/v1/client/releases/latest",
+                "proxy": "http://proxy.example.test:8080",
+                "maximum_redirection": 0,
+                "authorization": "Bearer device-secret",
+                "user_agent": "CWS-Codex-Windows/0.1.6",
+            },
+        )
+
+    def test_github_manifest_request_propagates_proxy_without_authorization(self):
+        result = self.run_update_library(
+            r"""
+            $Config = [pscustomobject]@{
+                broker_url = "https://broker.example.test"
+                proxy_url = "http://proxy.example.test:8080"
+            }
+            $script:ObservedRequest = $null
+            $TokenReader = { param($TokenPath) "device-secret" }
+            $BrokerFetch = { param($Request) throw "broker unavailable" }
+            $GithubFetch = {
+                param($Request)
+                $script:ObservedRequest = $Request
+                [pscustomobject]@{
+                    tag_name = "v0.1.7"
+                    name = "CWS Codex v0.1.7"
+                    assets = @([pscustomobject]@{
+                        name = "CWS-Codex-Setup-v0.1.7.exe"
+                        size = 9
+                        digest = "sha256:9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
+                        browser_download_url = "https://github.com/ichbinbz/gpt_share/releases/download/v0.1.7/CWS-Codex-Setup-v0.1.7.exe"
+                    })
+                }
+            }
+            $Candidate = Get-CwsUpdateCandidate `
+                -Config $Config `
+                -CurrentVersion "0.1.6" `
+                -TokenPath "unused.dpapi" `
+                -TokenReader $TokenReader `
+                -BrokerFetch $BrokerFetch `
+                -GithubFetch $GithubFetch
+            [pscustomobject]@{
+                source = $Candidate.source
+                proxy = [string] $script:ObservedRequest.Proxy
+                authorization_present = $script:ObservedRequest.Headers.Contains("Authorization")
+                user_agent = [string] $script:ObservedRequest.Headers."User-Agent"
+            } | ConvertTo-Json -Compress
+            """
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            json.loads(result.stdout.strip()),
+            {
+                "source": "GitHub",
+                "proxy": "http://proxy.example.test:8080",
+                "authorization_present": False,
+                "user_agent": "CWS-Codex-Windows/0.1.6",
+            },
+        )
+
+    def test_broker_download_propagates_proxy_auth_and_disables_redirects(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            download_path = Path(temporary_directory) / "download.exe"
+            result = self.run_update_library(
+                rf"""
+                $Candidate = [pscustomobject]@{{
+                    source = "Broker"
+                    version = "0.1.7"
+                    name = "CWS-Codex-Setup-v0.1.7.exe"
+                    size = 9
+                    sha256 = "9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
+                    download_url = "https://broker.example.test/v1/client/releases/download/CWS-Codex-Setup-v0.1.7.exe"
+                    headers = @{{
+                        Authorization = "Bearer device-secret"
+                        "User-Agent" = "CWS-Codex-Windows/0.1.6"
+                    }}
+                }}
+                $script:ObservedRequest = $null
+                $DownloadFetch = {{
+                    param($Request)
+                    $script:ObservedRequest = $Request
+                    [IO.File]::WriteAllBytes($Request.OutFile, [Text.Encoding]::UTF8.GetBytes("installer"))
+                }}
+                $InstallerStart = {{
+                    param($InstallerPath)
+                    [pscustomobject]@{{ ExitCode = 0 }}
+                }}
+                $Installed = Install-CwsUpdateCandidate `
+                    -Candidate $Candidate `
+                    -DownloadPath "{str(download_path).replace('"', '`"')}" `
+                    -ProxyUrl "http://proxy.example.test:8080" `
+                    -DownloadFetch $DownloadFetch `
+                    -InstallerStart $InstallerStart
+                [pscustomobject]@{{
+                    installed = $Installed
+                    proxy = [string] $script:ObservedRequest.Proxy
+                    maximum_redirection = $script:ObservedRequest.MaximumRedirection
+                    authorization = [string] $script:ObservedRequest.Headers.Authorization
+                    user_agent = [string] $script:ObservedRequest.Headers."User-Agent"
+                }} | ConvertTo-Json -Compress
+                """
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            json.loads(result.stdout.strip()),
+            {
+                "installed": True,
+                "proxy": "http://proxy.example.test:8080",
+                "maximum_redirection": 0,
+                "authorization": "Bearer device-secret",
+                "user_agent": "CWS-Codex-Windows/0.1.6",
+            },
+        )
+        self.assertFalse(download_path.exists())
+
+    def test_partial_download_is_removed_when_fetch_throws(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            download_path = Path(temporary_directory) / "partial.exe"
+            result = self.run_update_library(
+                rf"""
+                $Candidate = [pscustomobject]@{{
+                    source = "Broker"
+                    version = "0.1.7"
+                    name = "CWS-Codex-Setup-v0.1.7.exe"
+                    size = 9
+                    sha256 = "9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
+                    download_url = "https://broker.example.test/v1/client/releases/download/CWS-Codex-Setup-v0.1.7.exe"
+                    headers = @{{ Authorization = "Bearer device-secret" }}
+                }}
+                $DownloadFetch = {{
+                    param($Request)
+                    [IO.File]::WriteAllBytes($Request.OutFile, [byte[]](1, 2, 3))
+                    throw "download interrupted"
+                }}
+                try {{
+                    Install-CwsUpdateCandidate `
+                        -Candidate $Candidate `
+                        -DownloadPath "{str(download_path).replace('"', '`"')}" `
+                        -DownloadFetch $DownloadFetch | Out-Null
+                    throw "expected download to fail"
+                }}
+                catch {{
+                    [pscustomobject]@{{
+                        error = $_.Exception.Message
+                        partial_exists = Test-Path -LiteralPath "{str(download_path).replace('"', '`"')}"
+                    }} | ConvertTo-Json -Compress
+                }}
+                """
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout.strip())
+            self.assertIn("download interrupted", payload["error"])
+            self.assertFalse(payload["partial_exists"])
+            self.assertFalse(download_path.exists())
+
+    def test_github_download_propagates_proxy_without_authorization(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            download_path = Path(temporary_directory) / "download.exe"
+            result = self.run_update_library(
+                rf"""
+                $Candidate = [pscustomobject]@{{
+                    source = "GitHub"
+                    version = "0.1.7"
+                    name = "CWS-Codex-Setup-v0.1.7.exe"
+                    size = 9
+                    sha256 = "9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
+                    download_url = "https://github.com/ichbinbz/gpt_share/releases/download/v0.1.7/CWS-Codex-Setup-v0.1.7.exe"
+                    headers = @{{ "User-Agent" = "CWS-Codex-Windows/0.1.6" }}
+                }}
+                $script:ObservedRequest = $null
+                $DownloadFetch = {{
+                    param($Request)
+                    $script:ObservedRequest = $Request
+                    [IO.File]::WriteAllBytes($Request.OutFile, [Text.Encoding]::UTF8.GetBytes("installer"))
+                }}
+                $InstallerStart = {{
+                    param($InstallerPath)
+                    [pscustomobject]@{{ ExitCode = 0 }}
+                }}
+                $Installed = Install-CwsUpdateCandidate `
+                    -Candidate $Candidate `
+                    -DownloadPath "{str(download_path).replace('"', '`"')}" `
+                    -ProxyUrl "http://proxy.example.test:8080" `
+                    -DownloadFetch $DownloadFetch `
+                    -InstallerStart $InstallerStart
+                [pscustomobject]@{{
+                    installed = $Installed
+                    proxy = [string] $script:ObservedRequest.Proxy
+                    authorization_present = $script:ObservedRequest.Headers.Contains("Authorization")
+                    user_agent = [string] $script:ObservedRequest.Headers."User-Agent"
+                }} | ConvertTo-Json -Compress
+                """
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            json.loads(result.stdout.strip()),
+            {
+                "installed": True,
+                "proxy": "http://proxy.example.test:8080",
+                "authorization_present": False,
+                "user_agent": "CWS-Codex-Windows/0.1.6",
+            },
+        )
+        self.assertFalse(download_path.exists())
+
+    def test_github_asset_name_must_match_canonical_case(self):
+        result = self.run_update_library(
+            r"""
+            $Release = [pscustomobject]@{
+                tag_name = "v0.1.7"
+                name = "CWS Codex v0.1.7"
+                assets = @([pscustomobject]@{
+                    name = "cws-codex-setup-v0.1.7.exe"
+                    size = 9
+                    digest = "sha256:9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
+                    browser_download_url = "https://github.com/ichbinbz/gpt_share/releases/download/v0.1.7/CWS-Codex-Setup-v0.1.7.exe"
+                })
+            }
+            $Rejected = $false
+            try {
+                ConvertTo-CwsGithubCandidate `
+                    -Release $Release `
+                    -Headers @{ "User-Agent" = "CWS-Codex-Windows/0.1.6" } | Out-Null
+            }
+            catch { $Rejected = $true }
+            [pscustomobject]@{ rejected = $Rejected } | ConvertTo-Json -Compress
+            """
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout.strip()), {"rejected": True})
+
+    def test_github_download_url_rejects_userinfo_and_nonstandard_port(self):
+        result = self.run_update_library(
+            r"""
+            $Urls = @(
+                "https://user@github.com/ichbinbz/gpt_share/releases/download/v0.1.7/CWS-Codex-Setup-v0.1.7.exe",
+                "https://github.com:444/ichbinbz/gpt_share/releases/download/v0.1.7/CWS-Codex-Setup-v0.1.7.exe"
+            )
+            $Rejected = @()
+            foreach ($Url in $Urls) {
+                $Release = [pscustomobject]@{
+                    tag_name = "v0.1.7"
+                    name = "CWS Codex v0.1.7"
+                    assets = @([pscustomobject]@{
+                        name = "CWS-Codex-Setup-v0.1.7.exe"
+                        size = 9
+                        digest = "sha256:9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
+                        browser_download_url = $Url
+                    })
+                }
+                try {
+                    ConvertTo-CwsGithubCandidate `
+                        -Release $Release `
+                        -Headers @{ "User-Agent" = "CWS-Codex-Windows/0.1.6" } | Out-Null
+                    $Rejected += $false
+                }
+                catch { $Rejected += $true }
+            }
+            [pscustomobject]@{ rejected = $Rejected } | ConvertTo-Json -Compress
+            """
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout.strip()), {"rejected": [True, True]})
+
+    def test_github_tag_allows_at_most_one_v_prefix(self):
+        result = self.run_update_library(
+            r"""
+            $Release = [pscustomobject]@{
+                tag_name = "vv0.1.7"
+                name = "CWS Codex v0.1.7"
+                assets = @([pscustomobject]@{
+                    name = "CWS-Codex-Setup-v0.1.7.exe"
+                    size = 9
+                    digest = "sha256:9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
+                    browser_download_url = "https://github.com/ichbinbz/gpt_share/releases/download/v0.1.7/CWS-Codex-Setup-v0.1.7.exe"
+                })
+            }
+            $Rejected = $false
+            try {
+                ConvertTo-CwsGithubCandidate `
+                    -Release $Release `
+                    -Headers @{ "User-Agent" = "CWS-Codex-Windows/0.1.6" } | Out-Null
+            }
+            catch { $Rejected = $true }
+            [pscustomobject]@{ rejected = $Rejected } | ConvertTo-Json -Compress
+            """
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout.strip()), {"rejected": True})
+
+    def test_each_selection_clears_previous_broker_fallback_reason(self):
+        result = self.run_update_library(
+            r"""
+            $Config = [pscustomobject]@{
+                broker_url = "https://broker.example.test"
+                proxy_url = ""
+            }
+            $TokenReader = { param($TokenPath) "device-secret" }
+            $GithubFetch = {
+                param($Request)
+                [pscustomobject]@{
+                    tag_name = "v0.1.7"
+                    name = "CWS Codex v0.1.7"
+                    assets = @([pscustomobject]@{
+                        name = "CWS-Codex-Setup-v0.1.7.exe"
+                        size = 9
+                        digest = "sha256:9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
+                        browser_download_url = "https://github.com/ichbinbz/gpt_share/releases/download/v0.1.7/CWS-Codex-Setup-v0.1.7.exe"
+                    })
+                }
+            }
+            $FailingBrokerFetch = { param($Request) throw "broker unavailable" }
+            Get-CwsUpdateCandidate `
+                -Config $Config `
+                -CurrentVersion "0.1.6" `
+                -TokenPath "unused.dpapi" `
+                -TokenReader $TokenReader `
+                -BrokerFetch $FailingBrokerFetch `
+                -GithubFetch $GithubFetch | Out-Null
+            $HadFallback = [bool] $script:CwsUpdateFallbackReason
+
+            $SuccessfulBrokerFetch = {
+                param($Request)
+                [pscustomobject]@{
+                    release_version = "0.1.7"
+                    published_at = "2026-09-18T00:00:00Z"
+                    assets = @([pscustomobject]@{
+                        platform = "windows-installer"
+                        name = "CWS-Codex-Setup-v0.1.7.exe"
+                        size = 9
+                        sha256 = "9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
+                        download_url = "/v1/client/releases/download/CWS-Codex-Setup-v0.1.7.exe"
+                    })
+                }
+            }
+            $Candidate = Get-CwsUpdateCandidate `
+                -Config $Config `
+                -CurrentVersion "0.1.6" `
+                -TokenPath "unused.dpapi" `
+                -TokenReader $TokenReader `
+                -BrokerFetch $SuccessfulBrokerFetch `
+                -GithubFetch $GithubFetch
+            [pscustomobject]@{
+                had_fallback = $HadFallback
+                second_source = $Candidate.source
+                fallback_cleared = $null -eq $script:CwsUpdateFallbackReason
+            } | ConvertTo-Json -Compress
+            """
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            json.loads(result.stdout.strip()),
+            {
+                "had_fallback": True,
+                "second_source": "Broker",
+                "fallback_cleared": True,
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
