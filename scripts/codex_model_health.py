@@ -27,12 +27,17 @@ def filter_codex_text_models(payload: dict[str, Any]) -> list[str]:
         if not isinstance(model, dict):
             continue
         name = model.get("slug") or model.get("id")
-        if (
-            isinstance(name, str)
-            and name
-            and model.get("supports_text") is True
-            and model.get("available") is True
-        ):
+        if "visibility" in model or "supported_in_api" in model:
+            supported = (
+                model.get("visibility") == "list"
+                and model.get("supported_in_api") is True
+            )
+        else:
+            supported = (
+                model.get("supports_text") is True
+                and model.get("available") is True
+            )
+        if isinstance(name, str) and name and supported:
             names.add(name)
     return sorted(names)
 

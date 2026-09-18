@@ -39,6 +39,25 @@ def test_filters_data_id_shape_and_returns_sorted_deduplicated_names():
     assert filter_codex_text_models(payload) == ["gpt-a", "gpt-z"]
 
 
+def test_filters_current_codex_catalog_visibility_shape():
+    payload = {
+        "models": [
+            {"slug": "gpt-6-astra", "visibility": "list", "supported_in_api": True},
+            {"slug": "gpt-5.6-sol", "visibility": "list", "supported_in_api": True},
+            {
+                "slug": "gpt-reserve",
+                "visibility": "hide",
+                "supported_in_api": True,
+                "supports_text": True,
+                "available": True,
+            },
+            {"slug": "gpt-disabled", "visibility": "list", "supported_in_api": False},
+        ]
+    }
+
+    assert filter_codex_text_models(payload) == ["gpt-5.6-sol", "gpt-6-astra"]
+
+
 @pytest.mark.parametrize(
     ("status", "code", "message", "expected"),
     [

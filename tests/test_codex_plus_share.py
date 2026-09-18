@@ -451,8 +451,11 @@ def test_discover_models_uses_oauth_headers_and_filters_codex_text_models(tmp_pa
 
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path.endswith("/backend-api/codex/models")
+        assert request.url.params.get_list("client_version") == ["99.99.99"]
+        assert request.url.params["existing"] == "kept"
         assert request.headers["authorization"].startswith("Bearer ")
         assert request.headers["chatgpt-account-id"] == "acct-test"
+        assert request.headers["originator"] == "codex_cli_rs"
         return httpx.Response(
             200,
             json={
@@ -466,6 +469,7 @@ def test_discover_models_uses_oauth_headers_and_filters_codex_text_models(tmp_pa
 
     async def run() -> list[str]:
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            account.models_url += "?existing=kept&client_version=old"
             return await account.discover_models(client, probe_auth_payload(), timeout=5)
 
     assert asyncio.run(run()) == ["gpt-text"]
@@ -479,12 +483,32 @@ def test_probe_model_sends_fixed_minimal_non_user_request(tmp_path: Path):
         assert request.url.path.endswith("/backend-api/codex/responses")
         assert request.headers["authorization"].startswith("Bearer ")
         assert request.headers["chatgpt-account-id"] == "acct-test"
+        assert request.headers["originator"] == "codex_cli_rs"
+        assert request.headers["accept"] == "text/event-stream"
+        assert request.extensions["timeout"] == {
+            "connect": 5,
+            "read": 5,
+            "write": 5,
+            "pool": 5,
+        }
         assert body["model"] == "gpt-text"
         assert body["store"] is False
+        assert body["stream"] is True
         assert "tools" not in body
-        assert body["input"] == "Reply with OK."
+        assert "max_output_tokens" not in body
+        assert body["input"] == [
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Reply with OK."}],
+            }
+        ]
         assert "company" not in request.content.decode().lower()
-        return httpx.Response(200, json={"id": "resp-test", "status": "completed"})
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text='data: {"type":"response.completed","response":{"id":"resp-test"}}\n\n',
+        )
 
     async def run() -> dict:
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -494,6 +518,64 @@ def test_probe_model_sends_fixed_minimal_non_user_request(tmp_path: Path):
         "status": "available",
         "available": True,
         "http_status": 200,
+    }
+
+
+def test_probe_model_stops_after_terminal_sse_event_without_waiting_for_eof(tmp_path: Path):
+    account = probe_account(tmp_path)
+
+    class TerminalThenExplode(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'data: {"type":"response.completed","response":{"id":"resp-test"}}\n\n'
+            raise AssertionError("probe read beyond the terminal SSE event")
+
+        async def aclose(self):
+            return None
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=TerminalThenExplode(),
+        )
+
+    async def run() -> dict:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await account.probe_model(client, probe_auth_payload(), "gpt-text", timeout=5)
+
+    assert asyncio.run(run())["status"] == "available"
+
+
+def test_probe_model_total_timeout_covers_stalled_sse_body(tmp_path: Path):
+    account = probe_account(tmp_path)
+
+    class NeverResponds(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            await asyncio.sleep(60)
+            if False:
+                yield b""
+
+        async def aclose(self):
+            return None
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=NeverResponds(),
+        )
+
+    async def run() -> dict:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await account.probe_model(
+                client, probe_auth_payload(), "gpt-text", timeout=0.01
+            )
+
+    assert asyncio.run(run()) == {
+        "status": "probe_error",
+        "available": None,
+        "error_code": "timeout",
+        "error_message": "request timed out",
     }
 
 
@@ -562,6 +644,44 @@ def test_probe_model_classifies_sse_error_event(tmp_path: Path):
     assert "response_body" not in result
 
 
+def test_probe_model_stops_after_terminal_sse_error_without_retaining_later_body(
+    tmp_path: Path,
+):
+    account = probe_account(tmp_path)
+
+    class ErrorThenSecret(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield (
+                b'event: error\ndata: {"type":"error","error":{"code":'
+                b'"server_overloaded","message":"Selected model is at capacity."}}\n\n'
+            )
+            raise AssertionError("probe retained or read the response body after terminal error")
+
+        async def aclose(self):
+            return None
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=ErrorThenSecret(),
+        )
+
+    async def run() -> dict:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await account.probe_model(client, probe_auth_payload(), "gpt-text", timeout=5)
+
+    result = asyncio.run(run())
+    assert result == {
+        "status": "capacity",
+        "available": False,
+        "http_status": 200,
+        "error_code": "server_overloaded",
+        "error_message": "Selected model is at capacity.",
+    }
+    assert "response_body" not in result
+
+
 def test_probe_model_refreshes_once_after_401_and_retries(tmp_path: Path):
     old_access = jwt({"exp": 2_100_000_000})
     new_access = jwt({"exp": 2_200_000_000})
@@ -592,6 +712,35 @@ def test_probe_model_refreshes_once_after_401_and_retries(tmp_path: Path):
     assert attempts == [f"Bearer {old_access}", f"Bearer {new_access}"]
     stored = json.loads(account.auth_path.read_text(encoding="utf-8"))
     assert stored["last_refresh_reason"] == "model_probe_unauthorized"
+
+
+def test_probe_model_total_timeout_covers_401_refresh(tmp_path: Path):
+    payload = probe_auth_payload()
+    account = probe_account(tmp_path, payload)
+    refresh_started = asyncio.Event()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth/token":
+            refresh_started.set()
+            await asyncio.sleep(60)
+            raise AssertionError("refresh unexpectedly completed")
+        return httpx.Response(401, json={"error": {"code": "token_expired"}})
+
+    async def run() -> dict:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            result = await asyncio.wait_for(
+                account.probe_model(client, payload, "gpt-text", timeout=0.01),
+                timeout=0.5,
+            )
+            assert refresh_started.is_set()
+            return result
+
+    assert asyncio.run(run()) == {
+        "status": "probe_error",
+        "available": None,
+        "error_code": "timeout",
+        "error_message": "request timed out",
+    }
 
 
 def test_discovery_refresh_updates_auth_snapshot_for_all_later_model_probes(tmp_path: Path):

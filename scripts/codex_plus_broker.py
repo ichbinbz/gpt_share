@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, BinaryIO, Iterator
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request as FastAPIRequest, Response
@@ -77,6 +77,7 @@ CHATGPT_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 DEFAULT_CODEX_MODELS_URL = "https://chatgpt.com/backend-api/codex/models"
 DEFAULT_CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses"
 MODEL_PROBE_INPUT = "Reply with OK."
+CODEX_MODELS_CLIENT_VERSION = "99.99.99"
 DEFAULT_PRIMARY_AUTH = "/var/lib/cws-codex/auth.json"
 DEFAULT_ACCOUNTS_DIR = "/var/lib/cws-codex/accounts"
 DEFAULT_STATE_FILE = "/var/lib/cws-codex/broker-state.json"
@@ -790,7 +791,9 @@ class AccountRecord:
             return payload
 
     @staticmethod
-    def _codex_headers(payload: dict[str, Any]) -> dict[str, str]:
+    def _codex_headers(
+        payload: dict[str, Any], *, accept: str = "application/json"
+    ) -> dict[str, str]:
         tokens = payload["tokens"]
         access_token = tokens["access_token"]
         account_id = tokens.get("account_id") or token_account_id(access_token)
@@ -800,8 +803,23 @@ class AccountRecord:
             "Authorization": f"Bearer {access_token}",
             "ChatGPT-Account-Id": account_id,
             "Content-Type": "application/json",
+            "Accept": accept,
+            "originator": "codex_cli_rs",
             "User-Agent": "codex-cli",
         }
+
+    @staticmethod
+    def _models_discovery_url(url: str) -> str:
+        parsed = urlsplit(url)
+        query = [
+            (key, value)
+            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+            if key != "client_version"
+        ]
+        query.append(("client_version", CODEX_MODELS_CLIENT_VERSION))
+        return urlunsplit(
+            (parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment)
+        )
 
     async def _codex_request(
         self,
@@ -849,7 +867,11 @@ class AccountRecord:
         """Discover supported Codex text models without retaining response content."""
         try:
             response = await self._codex_request(
-                client, payload, "GET", self.models_url, timeout
+                client,
+                payload,
+                "GET",
+                self._models_discovery_url(self.models_url),
+                timeout,
             )
         except (asyncio.TimeoutError, httpx.TimeoutException) as exc:
             raise RuntimeError("model discovery timed out") from exc
@@ -867,6 +889,24 @@ class AccountRecord:
         if not models:
             raise RuntimeError("model discovery returned no supported text models")
         return models
+
+    @staticmethod
+    def _probe_error_from_payload(
+        payload: dict[str, Any],
+    ) -> tuple[str | None, str | None] | None:
+        error = payload.get("error")
+        if not isinstance(error, dict):
+            response_payload = payload.get("response")
+            if isinstance(response_payload, dict):
+                error = response_payload.get("error")
+        if not isinstance(error, dict):
+            return None
+        code = error.get("code")
+        message = error.get("message")
+        return (
+            code if isinstance(code, str) else None,
+            message if isinstance(message, str) else None,
+        )
 
     @staticmethod
     def _probe_error(response: httpx.Response) -> tuple[str | None, str | None] | None:
@@ -892,21 +932,59 @@ class AccountRecord:
                     payloads.append(event)
 
         for payload in payloads:
-            error = payload.get("error")
-            if not isinstance(error, dict):
-                response_payload = payload.get("response")
-                if isinstance(response_payload, dict):
-                    error = response_payload.get("error")
-            if isinstance(error, dict):
-                code = error.get("code")
-                message = error.get("message")
-                return (
-                    code if isinstance(code, str) else None,
-                    message if isinstance(message, str) else None,
-                )
+            error = AccountRecord._probe_error_from_payload(payload)
+            if error is not None:
+                return error
         if response.status_code >= 400:
             return (None, f"HTTP {response.status_code}")
         return None
+
+    async def _stream_probe_once(
+        self,
+        client: httpx.AsyncClient,
+        payload: dict[str, Any],
+        request_body: dict[str, Any],
+        timeout: float,
+    ) -> tuple[int, tuple[str | None, str | None] | None]:
+        async def execute() -> tuple[int, tuple[str | None, str | None] | None]:
+            async with client.stream(
+                "POST",
+                self.responses_url,
+                headers=self._codex_headers(payload, accept="text/event-stream"),
+                json=request_body,
+                timeout=timeout,
+            ) as response:
+                if response.status_code == 401:
+                    return response.status_code, ("unauthorized", "HTTP 401")
+
+                content_type = response.headers.get("content-type", "").lower()
+                if "text/event-stream" not in content_type:
+                    await response.aread()
+                    return response.status_code, self._probe_error(response)
+
+                async for line in response.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if not data or data == "[DONE]":
+                        continue
+                    try:
+                        event = json.loads(data)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+                    if not isinstance(event, dict):
+                        continue
+                    error = self._probe_error_from_payload(event)
+                    if error is not None:
+                        return response.status_code, error
+                    event_type = event.get("type")
+                    if event_type == "response.completed":
+                        return response.status_code, None
+                    if event_type == "response.failed":
+                        return response.status_code, (None, "response failed")
+                return response.status_code, (None, "response stream ended before completion")
+
+        return await asyncio.wait_for(execute(), timeout=timeout)
 
     async def probe_model(
         self,
@@ -918,18 +996,43 @@ class AccountRecord:
         """Send one fixed minimal probe and return only sanitized structured status."""
         request_body = {
             "model": model,
-            "input": MODEL_PROBE_INPUT,
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": MODEL_PROBE_INPUT}],
+                }
+            ],
             "store": False,
-            "max_output_tokens": 16,
+            "stream": True,
         }
+
+        async def probe_with_refresh() -> tuple[
+            int, tuple[str | None, str | None] | None
+        ]:
+            status_code, error = await self._stream_probe_once(
+                client, payload, request_body, timeout
+            )
+            if status_code == 401:
+                rejected_token = payload["tokens"]["access_token"]
+                refreshed = await self.ensure_fresh(
+                    client,
+                    0,
+                    force=True,
+                    reason="model_probe_unauthorized",
+                    rejected_access_token=rejected_token,
+                )
+                if refreshed is not payload:
+                    payload.clear()
+                    payload.update(refreshed)
+                status_code, error = await self._stream_probe_once(
+                    client, payload, request_body, timeout
+                )
+            return status_code, error
+
         try:
-            response = await self._codex_request(
-                client,
-                payload,
-                "POST",
-                self.responses_url,
-                timeout,
-                json_body=request_body,
+            status_code, error = await asyncio.wait_for(
+                probe_with_refresh(), timeout=timeout
             )
         except (asyncio.TimeoutError, httpx.TimeoutException):
             return {
@@ -948,19 +1051,18 @@ class AccountRecord:
                 "error_message": "probe request failed",
             }
 
-        error = self._probe_error(response)
         if error is None:
             return {
                 "status": "available",
                 "available": True,
-                "http_status": response.status_code,
+                "http_status": status_code,
             }
         error_code, error_message = error
-        status = classify_probe_failure(response.status_code, error_code, error_message)
+        status = classify_probe_failure(status_code, error_code, error_message)
         return {
             "status": status,
             "available": None if status == "probe_error" else False,
-            "http_status": response.status_code,
+            "http_status": status_code,
             **({"error_code": error_code} if error_code else {}),
             **({"error_message": error_message} if error_message else {}),
         }
