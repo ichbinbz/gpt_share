@@ -17,6 +17,22 @@ if ($StatusOnly) {
     Write-Host "CWS Codex 员工端 v$([string] $Config.client_version)"
     return
 }
+$SelectedAccount = $null
+try {
+    $Choices = Get-CwsAccountChoices -Config $Config -TokenPath (Join-Path $PSScriptRoot "device-token.dpapi")
+    $SelectedAccount = Show-CwsAccountChooser -Payload $Choices
+}
+catch {
+    Write-CwsLaunchLog ("Account selection failed: " + $_.Exception.Message)
+    Add-Type -AssemblyName System.Windows.Forms
+    [System.Windows.Forms.MessageBox]::Show(
+        "无法读取账号列表，客户端不会自动切换账号。`r`n$($_.Exception.Message)",
+        "CWS Codex 账号选择失败",
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Error
+    ) | Out-Null
+    return
+}
 $Updater = Join-Path $PSScriptRoot "Update-CwsCodex.ps1"
 if (Test-Path -LiteralPath $Updater) {
     try {
@@ -67,7 +83,7 @@ if ($InstallExtension -and -not $ExtensionInstalled) {
 
 $SyncSucceeded = $true
 try {
-    & (Join-Path $PSScriptRoot "Sync-CwsCodex.ps1") -ConfigPath $ConfigPath -NewLease
+    & (Join-Path $PSScriptRoot "Sync-CwsCodex.ps1") -ConfigPath $ConfigPath -NewLease -AccountAlias $SelectedAccount
     Write-CwsLaunchLog "Credential synchronization succeeded."
 }
 catch {

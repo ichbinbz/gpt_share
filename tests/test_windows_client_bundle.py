@@ -137,9 +137,20 @@ def test_launcher_opens_vscode_even_when_credential_sync_fails_and_logs_reason()
 def test_launcher_requests_a_new_lease_once_per_client_start():
     launcher = read("Launch-CwsCodex.ps1")
     watcher = read("Watch-CwsCodex.ps1")
-    expected_sync = '& (Join-Path $PSScriptRoot "Sync-CwsCodex.ps1") -ConfigPath $ConfigPath -NewLease'
-    assert expected_sync in launcher
+    assert '& (Join-Path $PSScriptRoot "Sync-CwsCodex.ps1") -ConfigPath $ConfigPath -NewLease -AccountAlias $SelectedAccount' in launcher
     assert "-NewLease" not in watcher
+
+
+def test_launcher_shows_account_picker_before_sync_and_sync_accepts_selected_alias():
+    launcher = read("Launch-CwsCodex.ps1")
+    sync = read("Sync-CwsCodex.ps1")
+    common = read("Common-CwsCodex.ps1")
+    assert "Get-CwsAccountChoices" in common
+    assert "Show-CwsAccountChooser" in common
+    assert "Get-CwsAccountChoices -Config $Config" in launcher
+    assert "Show-CwsAccountChooser -Payload $Choices" in launcher
+    assert "$Body.account_alias = $AccountAlias" in sync
+    assert "当前没有可用的 Codex 账号" in common
 
 
 def test_diagnostics_checks_vscode_proxy_broker_and_token_without_printing_secret():
@@ -149,6 +160,13 @@ def test_diagnostics_checks_vscode_proxy_broker_and_token_without_printing_secre
     assert "Sync-CwsCodex.ps1" in diagnostics
     assert "device-token.dpapi" in diagnostics
     assert "Write-Host $DeviceToken" not in diagnostics
+
+
+def test_admin_dashboard_displays_each_employees_current_account():
+    dashboard = (ROOT / "scripts" / "codex_quota_dashboard.html").read_text(encoding="utf-8")
+    assert "当前账号" in dashboard
+    assert "current_account_alias" in dashboard
+    assert "lease_expires_at" in dashboard
 
 
 def test_usage_reporter_sends_only_cumulative_counters_with_device_token():

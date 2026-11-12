@@ -1,7 +1,8 @@
 ﻿param(
     [string] $ConfigPath = (Join-Path $PSScriptRoot "config.json"),
     [switch] $NewLease,
-    [switch] $Quiet
+    [switch] $Quiet,
+    [string] $AccountAlias
 )
 
 $ErrorActionPreference = "Stop"
@@ -50,6 +51,9 @@ if ($ClientIp) {
 }
 if ($LeaseId) {
     $Body.lease_id = $LeaseId
+}
+if ($AccountAlias) {
+    $Body.account_alias = $AccountAlias
 }
 
 $Request = @{

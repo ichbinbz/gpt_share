@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 
-VERSION = "0.1.7"
+VERSION = "0.1.8"
 GITHUB_REPOSITORY = "ichbinbz/gpt_share"
 INSTALL_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = INSTALL_DIR / "config.json"
@@ -253,6 +253,60 @@ def request_json(
     if not isinstance(value, dict):
         raise RuntimeError(f"{source_name} 返回格式无效")
     return value
+
+
+def broker_account_choices(config: dict[str, Any], device_token: str) -> dict[str, Any]:
+    payload = request_json(
+        str(config["broker_url"]).rstrip("/") + "/v1/client/accounts",
+        proxy_url=str(config.get("proxy_url") or ""),
+        device_token=device_token,
+    )
+    accounts = payload.get("accounts")
+    if not isinstance(accounts, list) or not accounts:
+        raise RuntimeError("Broker 没有返回可选账号")
+    valid = []
+    for account in accounts:
+        if not isinstance(account, dict) or not isinstance(account.get("alias"), str):
+            continue
+        if not isinstance(account.get("windows"), list):
+            account["windows"] = []
+        valid.append(account)
+    if not valid:
+        raise RuntimeError("Broker 返回的账号列表无效")
+    payload["accounts"] = valid
+    return payload
+
+
+def choose_account(payload: dict[str, Any], input_fn=input) -> str:
+    accounts = payload["accounts"]
+    recommended = payload.get("recommended_alias")
+    available = [item for item in accounts if item.get("available") is True]
+    if not available:
+        raise RuntimeError("当前没有可用账号")
+    positions = {str(item["alias"]): index for index, item in enumerate(available, 1)}
+    print("请选择要使用的 Codex 账号：")
+    for index, item in enumerate(accounts, 1):
+        windows = item.get("windows") or []
+        remaining = ", ".join(
+            f"{window.get('name', 'window')}余量 {window.get('remaining_percent', '?')}%"
+            for window in windows if isinstance(window, dict)
+        ) or "余量未知"
+        marker = "（推荐）" if item.get("recommended") or item.get("alias") == recommended else ""
+        state = "可用" if item.get("available") else f"不可用：{item.get('status', 'unknown')}"
+        print(f"  {index}. {item['alias']} [{state}] {remaining} {marker}")
+    default_alias = str(recommended) if recommended in positions else str(available[0]["alias"])
+    while True:
+        choice = input_fn(f"输入账号编号（直接回车使用 {default_alias}）：").strip()
+        if not choice:
+            return default_alias
+        try:
+            selected = accounts[int(choice) - 1]
+        except (ValueError, IndexError):
+            print("请输入列表中的编号。")
+            continue
+        if selected.get("available") is True:
+            return str(selected["alias"])
+        print("该账号当前不可用，请选择其他账号。")
 
 
 def version_tuple(value: str) -> tuple[int, int, int]:
@@ -557,7 +611,7 @@ def make_auth_payload(lease: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def synchronize(config_path: Path = CONFIG_PATH, *, new_lease: bool = False, quiet: bool = False) -> dict[str, Any]:
+def synchronize(config_path: Path = CONFIG_PATH, *, new_lease: bool = False, quiet: bool = False, account_alias: str | None = None) -> dict[str, Any]:
     config = read_config(config_path)
     token = read_device_token(config_path.parent / "device-token")
     codex_home = expanded_path(str(config["codex_home"]))
@@ -588,6 +642,8 @@ def synchronize(config_path: Path = CONFIG_PATH, *, new_lease: bool = False, qui
         body["client_ip"] = client_ip
     if lease_id:
         body["lease_id"] = str(lease_id)
+    if account_alias:
+        body["account_alias"] = account_alias
 
     lease = request_json(
         str(config["broker_url"]).rstrip("/") + "/v1/lease",
@@ -774,11 +830,13 @@ def launch(config_path: Path = CONFIG_PATH) -> int:
     except Exception as exc:
         append_log("launch.log", f"Client update check failed: {exc}")
     config = read_config(config_path)
+    token = read_device_token(config_path.parent / "device-token")
+    selected_account = choose_account(broker_account_choices(config, token))
     vscode = find_vscode(str(config.get("vscode_path") or ""))
     if not vscode:
         raise RuntimeError("未找到 Visual Studio Code，请先安装 VS Code")
     try:
-        synchronize(config_path)
+        synchronize(config_path, new_lease=True, account_alias=selected_account)
         append_log("launch.log", "Credential synchronization succeeded.")
     except Exception as exc:  # launch remains available for diagnostics and offline use
         append_log("launch.log", f"Credential synchronization failed: {exc}")
@@ -941,6 +999,7 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument("--config", type=Path, default=CONFIG_PATH)
         if name == "sync":
             command.add_argument("--new-lease", action="store_true")
+            command.add_argument("--account-alias")
     configure = subparsers.add_parser("configure-proxy")
     configure.add_argument("--config", type=Path, default=CONFIG_PATH)
     selection = configure.add_mutually_exclusive_group()
@@ -961,7 +1020,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         if args.command == "sync":
-            synchronize(args.config, new_lease=args.new_lease)
+            synchronize(args.config, new_lease=args.new_lease, account_alias=args.account_alias)
             return 0
         if args.command == "report":
             report_usage(args.config)

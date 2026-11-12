@@ -61,10 +61,13 @@ def request_lease(
     device_id: str,
     lease_id: str | None,
     proxy_url: str | None = None,
+    account_alias: str | None = None,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {"device_id": device_id}
     if lease_id:
         body["lease_id"] = lease_id
+    if account_alias:
+        body["account_alias"] = account_alias
     request = urllib.request.Request(
         broker_url.rstrip("/") + "/v1/lease",
         data=json.dumps(body).encode("utf-8"),

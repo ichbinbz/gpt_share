@@ -1,4 +1,4 @@
-CWS Codex Ubuntu/Linux 员工端 v0.1.7
+CWS Codex Ubuntu/Linux 员工端 v0.1.8
 =====================================
 
 系统要求：
@@ -7,7 +7,7 @@ CWS Codex Ubuntu/Linux 员工端 v0.1.7
 - systemd 用户服务（建议，用于每 5 分钟自动同步）
 
 安装：
-1. 解压 CWS-Codex-Linux-v0.1.7.tar.gz。
+1. 解压 CWS-Codex-Linux-v0.1.8.tar.gz。
 2. 打开终端进入解压后的目录，不要使用 sudo。
 3. 执行：
 
@@ -26,6 +26,7 @@ CWS Codex Ubuntu/Linux 员工端 v0.1.7
 - 重新分配账号：cws-codex sync --new-lease
 - 修改代理：cws-codex configure-proxy
 - 启动 VS Code：cws-codex launch
+- 启动时会在终端列出账号可用状态、主/次窗口余量，并预选 Broker 推荐账号。直接回车使用推荐账号，也可以输入其他可用账号编号。
 - 卸载：~/.local/share/cws-codex/uninstall.sh
 
 行为说明：
@@ -35,7 +36,7 @@ CWS Codex Ubuntu/Linux 员工端 v0.1.7
 - CODEX_HOME 保持为默认 ~/.codex，仅由客户端同步公司 auth.json 登录凭据。
 - 设备令牌保存在 ~/.local/share/cws-codex/device-token，目录权限 700、文件权限 600。
 - systemd 用户定时器每 5 分钟同步凭据和上报散列后的会话 Token 累计值。
-- 同一账号租约每 24 小时自动重选一次；同等额度可用性下优先分配活动租约更少的账号。
+- 启动选择的账号会写入当前租约；后台续期沿用该选择。需要换号时再次运行 `cws-codex launch` 或 `cws-codex sync --new-lease --account-alias <alias>`。
 - 本机统计用户消息数、字符数和文本 Token 估算值，服务器按北京时间自然周、自然月和累计汇总。
 - 不上传对话、提示词、代码或文件内容，只上传统计数值和散列会话 ID。
 - 启动时每天最多检查一次更新：优先从 Broker 获取经设备令牌鉴权的发布清单，Broker 不可用时回退到 GitHub Release。安装了 zenity 时会显示可点击的更新提示；确认后会校验安装包大小和 SHA-256，再自动升级并保留设备令牌和配置。

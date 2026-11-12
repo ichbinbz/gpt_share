@@ -22,6 +22,7 @@ from scripts.codex_plus_broker import (
     SessionTokenUsage,
     TokenBroker,
     account_selection_key,
+    client_account_choices_from_statuses,
     create_portal_user,
     derive_user_device_token,
     find_portal_user,
@@ -61,7 +62,7 @@ def probe_account(tmp_path: Path, payload: dict | None = None) -> AccountRecord:
 
 def client_release_manifest(asset_name: str, payload: bytes) -> dict:
     return {
-        "release_version": "0.1.7",
+        "release_version": "0.1.8",
         "published_at": "2026-09-18T00:00:00Z",
         "assets": [
             {
@@ -76,7 +77,7 @@ def client_release_manifest(asset_name: str, payload: bytes) -> dict:
 
 
 def configure_client_release(tmp_path: Path, monkeypatch, payload: bytes = b"installer"):
-    asset_name = "CWS-Codex-Setup-v0.1.7.exe"
+    asset_name = "CWS-Codex-Setup-v0.1.8.exe"
     (tmp_path / asset_name).write_bytes(payload)
     manifest = client_release_manifest(asset_name, payload)
     (tmp_path / "latest.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -146,7 +147,7 @@ def test_client_release_latest_returns_revalidated_manifest(tmp_path: Path, monk
     "filename",
     [
         "auth.json",
-        "CWS-Codex-Release-v0.1.7.zip",
+        "CWS-Codex-Release-v0.1.8.zip",
         "..%5Cauth.json",
         "%2e%2e%2fauth.json",
     ],
@@ -227,7 +228,7 @@ def test_client_release_download_returns_validated_bytes_and_fixed_headers(
     assert response.headers["content-type"] == "application/vnd.microsoft.portable-executable"
     assert response.headers["content-length"] == "9"
     assert response.headers["content-disposition"] == (
-        'attachment; filename="CWS-Codex-Setup-v0.1.7.exe"'
+        'attachment; filename="CWS-Codex-Setup-v0.1.8.exe"'
     )
     assert response.headers["cache-control"] == "private"
 
@@ -1617,6 +1618,85 @@ def test_lease_returns_sanitized_503_when_every_account_is_explicitly_blocked(mo
     assert exc_info.value.detail == "all Codex accounts have blocked models"
 
 
+def test_client_account_choices_include_remaining_windows_and_recommendation(monkeypatch):
+    result = client_account_choices_from_statuses([
+        {
+            "alias": "chatgpt011", "available": True, "plan_type": "pro", "active_leases": 0,
+            "usage": {"rate_limit": {"primary_window": {"used_percent": 60, "reset_after_seconds": 3600}}},
+            "model_health": {"available": True, "models": []},
+        },
+        {
+            "alias": "chatgpt024", "available": True, "plan_type": "pro", "active_leases": 0,
+            "usage": {"rate_limit": {"primary_window": {"used_percent": 10, "reset_after_seconds": 7200}}},
+            "model_health": {"available": True, "models": []},
+        },
+    ], 2_000_000_000)
+    assert result["recommended_alias"] == "chatgpt024"
+    assert result["accounts"] == [
+        {
+            "alias": "chatgpt011", "available": True, "plan_type": "pro", "active_leases": 0,
+            "recommended": False,
+            "windows": [{"name": "primary", "remaining_percent": 40, "reset_after_seconds": 3600}],
+        },
+        {
+            "alias": "chatgpt024", "available": True, "plan_type": "pro", "active_leases": 0,
+            "recommended": True,
+            "windows": [{"name": "primary", "remaining_percent": 90, "reset_after_seconds": 7200}],
+        },
+    ]
+
+
+def test_client_account_choices_do_not_duplicate_nested_and_top_level_windows():
+    result = client_account_choices_from_statuses(
+        [
+            {
+                "alias": "chatgpt011",
+                "available": True,
+                "usage": {
+                    "primary_window": {"used_percent": 99},
+                    "secondary_window": {"used_percent": 98},
+                    "rate_limit": {
+                        "primary_window": {"used_percent": 25},
+                        "secondary_window": {"used_percent": 50},
+                    },
+                },
+            }
+        ],
+        2_000_000_000,
+    )
+    assert result["accounts"][0]["windows"] == [
+        {"name": "primary", "remaining_percent": 75},
+        {"name": "secondary", "remaining_percent": 50},
+    ]
+
+
+def test_explicit_lease_account_alias_is_honored(monkeypatch):
+    now = 2_000_000_000
+    broker = health_aware_broker(
+        now, {"leases": {}}, {
+            "chatgpt011": {"models": {"gpt-test": {"status": "available", "available": True}}},
+            "chatgpt024": {"models": {"gpt-test": {"status": "available", "available": True}}},
+        },
+    )
+    broker.accounts = {"chatgpt011": "eleven", "chatgpt024": "twenty-four"}
+    monkeypatch.setattr("scripts.codex_plus_broker.time.time", lambda: now)
+    result = asyncio.run(broker.lease(
+        DeviceIdentity(token_id="device-a", label="employee-a"), "pc", None,
+        requested_account_alias="chatgpt024",
+    ))
+    assert result["account_alias"] == "chatgpt024"
+
+
+def test_client_account_route_requires_device_and_returns_choices(monkeypatch):
+    async def choices():
+        return {"version": "0.1.8", "recommended_alias": "chatgpt024", "accounts": []}
+    broker = SimpleNamespace(client_account_choices=choices)
+    monkeypatch.setattr(broker_module, "broker", broker)
+    monkeypatch.setattr(broker_module, "require_device", lambda: None)
+    client = TestClient(broker_module.app)
+    assert client.get("/v1/client/accounts").status_code == 401
+
+
 def test_admin_account_status_exposes_only_sanitized_model_health(monkeypatch):
     now = 2_000_000_000
     broker = health_aware_broker(
@@ -1931,14 +2011,16 @@ def test_device_activity_records_client_and_proxy_ip_history(tmp_path: Path):
         employee_name="胡鹏",
         employee_id="00465",
     )
-    asyncio.run(store.record_lease(employee, "192.168.2.51", "127.0.0.1"))
-    asyncio.run(store.record_lease(employee, "192.168.2.52", "127.0.0.1"))
+    asyncio.run(store.record_lease(employee, "192.168.2.51", "127.0.0.1", "chatgpt011", 2_000_000_000))
+    asyncio.run(store.record_lease(employee, "192.168.2.52", "127.0.0.1", "chatgpt024", 2_000_010_000))
     summary = asyncio.run(store.summary({employee.token_id}))[0]
     assert summary["employee_name"] == "胡鹏"
     assert summary["employee_id"] == "00465"
     assert summary["client_ip"] == "192.168.2.52"
     assert summary["source_ip"] == "127.0.0.1"
     assert summary["lease_count"] == 2
+    assert summary["current_account_alias"] == "chatgpt024"
+    assert summary["lease_expires_at"] == 2_000_010_000
     assert [item["ip"] for item in summary["client_ip_history"]] == [
         "192.168.2.52",
         "192.168.2.51",

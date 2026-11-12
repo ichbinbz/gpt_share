@@ -166,6 +166,12 @@ def normalize_codex_device_usage(payload: Any) -> dict[str, Any] | None:
         "enabled": bool(payload.get("enabled", False)),
         "client_ip": str(payload.get("client_ip")) if payload.get("client_ip") else None,
         "source_ip": str(payload.get("source_ip")) if payload.get("source_ip") else None,
+        "current_account_alias": (
+            str(payload.get("current_account_alias"))
+            if payload.get("current_account_alias")
+            else None
+        ),
+        "lease_expires_at": _number(payload.get("lease_expires_at")),
         "first_seen_at": _number(payload.get("first_seen_at")),
         "last_seen_at": _number(payload.get("last_seen_at")),
         "first_reported_at": _number(payload.get("first_reported_at")),

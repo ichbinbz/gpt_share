@@ -84,6 +84,91 @@ function Get-CwsConfig {
     return Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
 }
 
+function Get-CwsAccountChoices {
+    param(
+        [Parameter(Mandatory = $true)] $Config,
+        [Parameter(Mandatory = $true)] [string] $TokenPath
+    )
+
+    $BrokerBase = ([string] $Config.broker_url).Trim().TrimEnd("/")
+    if (-not $BrokerBase) { throw "配置中缺少 broker_url。" }
+    $Token = Get-CwsDeviceToken -TokenPath $TokenPath
+    $Request = @{
+        Uri                = $BrokerBase + "/v1/client/accounts"
+        Headers            = @{ Authorization = "Bearer $Token"; "User-Agent" = "CWS-Codex-Windows/0.1.8" }
+        TimeoutSec         = 30
+        MaximumRedirection = 0
+        DisableKeepAlive   = $true
+    }
+    if ([string] $Config.proxy_url) { $Request.Proxy = [string] $Config.proxy_url }
+    try { return Invoke-RestMethod @Request }
+    finally { $Token = $null }
+}
+
+function Show-CwsAccountChooser {
+    param([Parameter(Mandatory = $true)] $Payload)
+
+    $Accounts = @($Payload.accounts | Where-Object { $_.alias })
+    $Available = @($Accounts | Where-Object { $_.available -eq $true })
+    if ($Available.Count -eq 0) { throw "当前没有可用的 Codex 账号。" }
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    [System.Windows.Forms.Application]::EnableVisualStyles()
+    $Form = New-Object System.Windows.Forms.Form
+    $Form.Text = "CWS Codex 账号选择"
+    $Form.StartPosition = "CenterScreen"
+    $Form.Width = 760
+    $Form.Height = 430
+    $Form.MinimizeBox = $false
+    $Form.MaximizeBox = $false
+    $Title = New-Object System.Windows.Forms.Label
+    $Title.Text = "请选择要使用的账号；推荐账号已预选。"
+    $Title.AutoSize = $true
+    $Title.Left = 18
+    $Title.Top = 16
+    $Form.Controls.Add($Title)
+    $List = New-Object System.Windows.Forms.ListBox
+    $List.Left = 18
+    $List.Top = 48
+    $List.Width = 704
+    $List.Height = 270
+    $Rows = @()
+    foreach ($Account in $Accounts) {
+        $windows = @($Account.windows)
+        $remaining = (($windows | ForEach-Object { "$($_.name)余量 $($_.remaining_percent)%" }) -join ", ")
+        if (-not $remaining) { $remaining = "余量未知" }
+        $state = if ($Account.available -eq $true) { "可用" } else { "不可用：$($Account.status)" }
+        $marker = if ($Account.recommended -eq $true -or [string]$Account.alias -eq [string]$Payload.recommended_alias) { "（推荐）" } else { "" }
+        $Rows += $Account
+        [void] $List.Items.Add("$($Account.alias)    $state    $remaining    $marker")
+    }
+    $recommendedIndex = -1
+    for ($i = 0; $i -lt $Rows.Count; $i++) {
+        if ($Rows[$i].recommended -eq $true -or [string]$Rows[$i].alias -eq [string]$Payload.recommended_alias) { $recommendedIndex = $i; break }
+    }
+    if ($recommendedIndex -lt 0) { $recommendedIndex = 0 }
+    $List.SelectedIndex = $recommendedIndex
+    $Form.Controls.Add($List)
+    $Button = New-Object System.Windows.Forms.Button
+    $Button.Text = "使用所选账号"
+    $Button.Left = 570
+    $Button.Top = 335
+    $Button.Width = 152
+    $Button.Height = 34
+    $Button.Add_Click({
+        if ($List.SelectedIndex -ge 0 -and $Rows[$List.SelectedIndex].available -eq $true) {
+            $Form.Tag = [string] $Rows[$List.SelectedIndex].alias
+            $Form.DialogResult = [System.Windows.Forms.DialogResult]::OK
+            $Form.Close()
+        }
+        else { [System.Windows.Forms.MessageBox]::Show("请选择可用账号。", "CWS Codex") | Out-Null }
+    })
+    $Form.Controls.Add($Button)
+    $Form.Add_FormClosing({ if ($Form.DialogResult -ne [System.Windows.Forms.DialogResult]::OK -and -not $Form.Tag) { $_.Cancel = $true } })
+    [void] $Form.ShowDialog()
+    return [string] $Form.Tag
+}
+
 function Get-CwsDeviceToken {
     param([Parameter(Mandatory = $true)] [string] $TokenPath)
 

@@ -98,7 +98,7 @@ USER_INPUT_FIELDS = (
 )
 USAGE_FIELDS = TOKEN_FIELDS + USER_INPUT_FIELDS
 USAGE_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
-BROKER_VERSION = "0.1.7"
+BROKER_VERSION = "0.1.8"
 USERNAME_PATTERN = re.compile(r"^[A-Z]{1,16}\.[A-Z]{1,32}$")
 EMPLOYEE_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 PASSWORD_HASH_ITERATIONS = 310_000
@@ -420,6 +420,7 @@ class BrokerSettings:
 class LeaseRequest(BaseModel):
     device_id: str = Field(min_length=1, max_length=200)
     lease_id: str | None = Field(default=None, max_length=200)
+    account_alias: str | None = Field(default=None, max_length=128)
     client_ip: str | None = Field(default=None, max_length=45)
 
 
@@ -534,6 +535,8 @@ class DeviceUsageStore:
         identity: DeviceIdentity,
         client_ip: str | None,
         source_ip: str | None,
+        account_alias: str,
+        lease_expires_at: float,
     ) -> None:
         now = time.time()
         async with self.lock:
@@ -542,6 +545,8 @@ class DeviceUsageStore:
             device = self._upsert_device(state, identity, now)
             device["last_lease_at"] = now
             device["lease_count"] = int(device.get("lease_count", 0)) + 1
+            device["current_account_alias"] = account_alias
+            device["lease_expires_at"] = lease_expires_at
             self._record_ip(device, "client_ip", client_ip, now)
             self._record_ip(device, "source_ip", source_ip, now)
             atomic_write_json(self.path, state)
@@ -663,6 +668,8 @@ class DeviceUsageStore:
                     "source_ip": device.get("last_source_ip"),
                     "client_ip_history": device.get("client_ip_history", []),
                     "source_ip_history": device.get("source_ip_history", []),
+                    "current_account_alias": device.get("current_account_alias"),
+                    "lease_expires_at": device.get("lease_expires_at"),
                     "usage_timezone": "Asia/Shanghai",
                     "week_start_date": week_start.isoformat(),
                     "month_start_date": month_start.isoformat(),
@@ -1228,6 +1235,65 @@ def sanitized_model_health(record: dict[str, Any] | None, now: float) -> dict[st
     return result
 
 
+
+def client_account_choices_from_statuses(
+    statuses: list[dict[str, Any]], now: float
+) -> dict[str, Any]:
+    """Project account status into the non-secret client picker contract."""
+    candidates: list[tuple[tuple[int, int, float, float], str]] = []
+    accounts: list[dict[str, Any]] = []
+    for status in statuses:
+        alias = str(status.get("alias") or "")
+        usage = status.get("usage") if isinstance(status.get("usage"), dict) else None
+        windows: list[dict[str, Any]] = []
+        window_source = usage
+        if isinstance(usage, dict) and isinstance(usage.get("rate_limit"), dict):
+            window_source = usage["rate_limit"]
+        for name in ("primary", "secondary"):
+            window = (
+                window_source.get(f"{name}_window")
+                if isinstance(window_source, dict)
+                else None
+            )
+            if not isinstance(window, dict):
+                continue
+            used = _window_used_percent(window)
+            item: dict[str, Any] = {"name": name}
+            if used is not None:
+                item["remaining_percent"] = max(0, min(100, round(100 - used)))
+            reset_after = _seconds_until_reset(window, now)
+            if reset_after is not None:
+                item["reset_after_seconds"] = round(reset_after)
+            windows.append(item)
+        health = status.get("model_health") if isinstance(status.get("model_health"), dict) else {}
+        model_available = health.get("available")
+        available = bool(status.get("available")) and model_available is not False
+        item = {
+            "alias": alias,
+            "available": available,
+            "plan_type": str(status.get("plan_type") or "unknown"),
+            "active_leases": int(status.get("active_leases") or 0),
+            "windows": windows,
+        }
+        if not available:
+            item["status"] = "unavailable"
+        if isinstance(health.get("models"), list):
+            blocked = [m.get("status") for m in health["models"] if isinstance(m, dict)]
+            if not available and blocked:
+                item["status"] = next((value for value in blocked if value in {"quota", "capacity", "auth"}), "unavailable")
+        accounts.append(item)
+        if available and alias:
+            candidates.append((account_selection_key(usage, item["active_leases"], now=now), alias))
+    recommended = min(candidates)[1] if candidates else None
+    for item in accounts:
+        item["recommended"] = item["alias"] == recommended
+    return {
+        "version": BROKER_VERSION,
+        "recommended_alias": recommended,
+        "accounts": accounts,
+        "fetched_at": now,
+    }
+
 class TokenBroker:
     def __init__(self, settings: BrokerSettings, client: httpx.AsyncClient | None = None):
         self.settings = settings
@@ -1396,6 +1462,7 @@ class TokenBroker:
         identity: DeviceIdentity,
         client_device_id: str,
         requested_lease_id: str | None,
+        requested_account_alias: str | None = None,
         client_ip: str | None = None,
         source_ip: str | None = None,
     ) -> dict[str, Any]:
@@ -1436,10 +1503,14 @@ class TokenBroker:
                         and lease.get("client_device_hash") == client_device_hash
                     ):
                         leases.pop(lease_id, None)
-            alias = existing.get("account_alias") if isinstance(existing, dict) else None
+            alias = requested_account_alias or (existing.get("account_alias") if isinstance(existing, dict) else None)
             if alias not in self.accounts:
+                if requested_account_alias:
+                    raise HTTPException(status_code=404, detail="selected account does not exist")
                 alias = None
             elif probe_available(alias) is False:
+                if requested_account_alias:
+                    raise HTTPException(status_code=409, detail="selected account is unavailable")
                 leases.pop(str(requested_lease_id), None)
                 self._save_state(state)
                 existing = None
@@ -1509,6 +1580,14 @@ class TokenBroker:
                 "access_token_expires_at": token_expiry(access_token),
                 "usage": usage,
             }
+
+    async def client_account_choices(self) -> dict[str, Any]:
+        """Return the device-safe account picker payload with current allowance."""
+        return client_account_choices_from_statuses(
+            await self.account_status(refresh_usage=True), time.time()
+        )
+
+
 
     async def account_status(self, refresh_usage: bool = False) -> list[dict[str, Any]]:
         state = self._load_state()
@@ -1787,11 +1866,11 @@ async def require_admin(authorization: str | None = Header(default=None)) -> Non
 
 
 RELEASE_MEDIA_TYPES = {
-    "CWS-Codex-Setup-v0.1.7.exe": "application/vnd.microsoft.portable-executable",
-    "CWS-Codex-Release-v0.1.7.zip": "application/zip",
-    "CWS-Codex-Windows-v0.1.7.zip": "application/zip",
-    "CWS-Codex-Linux-v0.1.7.tar.gz": "application/gzip",
-    "CWS-Codex-Server-v0.1.7.tar.gz": "application/gzip",
+    "CWS-Codex-Setup-v0.1.8.exe": "application/vnd.microsoft.portable-executable",
+    "CWS-Codex-Release-v0.1.8.zip": "application/zip",
+    "CWS-Codex-Windows-v0.1.8.zip": "application/zip",
+    "CWS-Codex-Linux-v0.1.8.tar.gz": "application/gzip",
+    "CWS-Codex-Server-v0.1.8.tar.gz": "application/gzip",
 }
 
 WINDOWS_FILE_ATTRIBUTE_DIRECTORY = 0x10
@@ -2154,11 +2233,26 @@ async def create_lease(
         identity,
         request.device_id,
         request.lease_id,
+        requested_account_alias=request.account_alias,
         client_ip=client_ip,
         source_ip=source_ip,
     )
-    await usage_store.record_lease(identity, client_ip, source_ip)
+    await usage_store.record_lease(
+        identity,
+        client_ip,
+        source_ip,
+        result["account_alias"],
+        result["lease_expires_at"],
+    )
     return result
+
+
+@app.get("/v1/client/accounts")
+async def list_client_accounts(
+    identity: DeviceIdentity = Depends(require_device),
+) -> dict[str, Any]:
+    del identity
+    return await broker.client_account_choices()
 
 
 @app.post("/v1/usage/report")

@@ -85,6 +85,19 @@ def test_normalizes_employee_user_input_and_period_usage():
     assert device["week_start_date"] == "2026-08-17"
 
 
+def test_normalizes_employee_current_account_and_lease_expiry():
+    device = normalize_codex_device_usage(
+        {
+            "device_token_id": "device-1",
+            "current_account_alias": "chatgpt024",
+            "lease_expires_at": 2_000_010_000,
+        }
+    )
+    assert device is not None
+    assert device["current_account_alias"] == "chatgpt024"
+    assert device["lease_expires_at"] == 2_000_010_000
+
+
 def test_device_status_exposes_broker_version(monkeypatch):
     class Response:
         status_code = 200
