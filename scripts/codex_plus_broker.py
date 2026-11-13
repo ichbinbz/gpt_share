@@ -1222,6 +1222,10 @@ def sanitized_model_health(record: dict[str, Any] | None, now: float) -> dict[st
             value = _model_health_number(model.get(field))
             if value is not None:
                 item[field] = value
+        for field in ("probe_attempts", "probe_successes"):
+            value = model.get(field)
+            if isinstance(value, int) and not isinstance(value, bool):
+                item[field] = value
         http_status = model.get("http_status")
         if isinstance(http_status, int) and not isinstance(http_status, bool):
             item["http_status"] = http_status
@@ -1377,20 +1381,31 @@ class TokenBroker:
                                 "error_message": "account authentication failed",
                             }
                         else:
-                            try:
-                                result = await account.probe_model(
-                                    self.client,
-                                    auth,
-                                    model,
-                                    self.settings.model_probe_timeout_seconds,
+                            attempts = []
+                            for _ in range(5):
+                                try:
+                                    attempts.append(await account.probe_model(
+                                        self.client, auth, model,
+                                        self.settings.model_probe_timeout_seconds,
+                                    ))
+                                    if attempts[-1].get("status") == "auth" and attempts[-1].get("error_code") == "invalid_grant":
+                                        break
+                                except Exception:
+                                    attempts.append({
+                                        "status": "probe_error", "available": None,
+                                        "error_code": "request_failed",
+                                        "error_message": "probe request failed",
+                                    })
+                            successes = sum(item.get("status") == "available" for item in attempts)
+                            if successes >= 4:
+                                result = {"status": "available", "available": True}
+                            else:
+                                result = next(
+                                    (item for kind in ("capacity", "quota", "auth", "unsupported", "probe_error")
+                                     for item in attempts if item.get("status") == kind),
+                                    {"status": "probe_error", "available": None},
                                 )
-                            except Exception:
-                                result = {
-                                    "status": "probe_error",
-                                    "available": None,
-                                    "error_code": "request_failed",
-                                    "error_message": "probe request failed",
-                                }
+                            result = {**result, "probe_attempts": len(attempts), "probe_successes": successes}
                         model_records[model] = merge_model_probe(
                             previous_models.get(model),
                             result,

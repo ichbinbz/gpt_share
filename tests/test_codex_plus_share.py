@@ -924,7 +924,7 @@ class FakeProbeAccount:
     async def probe_model(self, _client, _payload, model, _timeout):
         self.probed_models.append(model)
         await asyncio.sleep(0.01)
-        if self.active_counter is not None and len(self.probed_models) == len(self.models):
+        if self.active_counter is not None and len(self.probed_models) == len(self.models) * 5:
             self.active_counter["active"] -= 1
         return dict(self.result)
 
@@ -951,9 +951,33 @@ def test_probe_models_once_uses_all_fallback_models_when_discovery_fails(tmp_pat
     state = asyncio.run(broker.probe_models_once(now=2_000.0))
 
     record = state["accounts"]["account-test"]
-    assert account.probed_models == ["fallback-one", "fallback-two"]
+    assert account.probed_models == ["fallback-one"] * 5 + ["fallback-two"] * 5
     assert record["discovery_source"] == "fallback"
     assert sorted(record["models"]) == ["fallback-one", "fallback-two"]
+
+
+@pytest.mark.parametrize(("statuses", "expected"), [
+    (["available"] * 4 + ["capacity"], "available"),
+    (["available"] * 3 + ["capacity"] * 2, "capacity"),
+    (["available"] * 3 + ["probe_error"] * 2, "probe_error"),
+])
+def test_model_health_requires_four_successes_in_five_probes(tmp_path: Path, statuses, expected):
+    account = FakeProbeAccount()
+    outcomes = iter(statuses)
+
+    async def probe(_client, _payload, model, _timeout):
+        account.probed_models.append(model)
+        status = next(outcomes)
+        return {"status": status, "available": status == "available" if status != "probe_error" else None}
+
+    account.probe_model = probe
+    broker = probe_broker(tmp_path, {"account-test": account})
+    state = asyncio.run(broker.probe_models_once(now=2_000.0))
+    model = state["accounts"]["account-test"]["models"]["gpt-text"]
+    assert account.probed_models == ["gpt-text"] * 5
+    assert model["status"] == expected
+    assert model["probe_successes"] == statuses.count("available")
+    assert model["probe_attempts"] == 5
 
 
 def test_probe_models_once_preserves_recent_known_good_on_transient_error(tmp_path: Path):

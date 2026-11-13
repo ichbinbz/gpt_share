@@ -98,6 +98,10 @@ def _model_record(record: dict[str, Any] | None) -> dict[str, Any]:
         cleaned["error_code"] = record["error_code"]
     if isinstance(record.get("error_message"), str):
         cleaned["error_message"] = record["error_message"][:500]
+    for field in ("probe_attempts", "probe_successes"):
+        value = record.get(field)
+        if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 5:
+            cleaned[field] = value
     return cleaned
 
 
