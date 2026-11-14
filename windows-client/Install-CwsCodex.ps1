@@ -14,7 +14,7 @@
 )
 
 $ErrorActionPreference = "Stop"
-$ClientVersion = "0.1.9"
+$ClientVersion = "0.1.10"
 . (Join-Path $PSScriptRoot "Common-CwsCodex.ps1")
 $InstallLogPath = Join-Path $env:TEMP "CWS-Codex-Install.log"
 

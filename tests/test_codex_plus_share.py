@@ -64,7 +64,7 @@ def probe_account(tmp_path: Path, payload: dict | None = None) -> AccountRecord:
 
 def client_release_manifest(asset_name: str, payload: bytes) -> dict:
     return {
-        "release_version": "0.1.9",
+        "release_version": "0.1.10",
         "published_at": "2026-09-18T00:00:00Z",
         "assets": [
             {
@@ -79,7 +79,7 @@ def client_release_manifest(asset_name: str, payload: bytes) -> dict:
 
 
 def configure_client_release(tmp_path: Path, monkeypatch, payload: bytes = b"installer"):
-    asset_name = "CWS-Codex-Setup-v0.1.9.exe"
+    asset_name = "CWS-Codex-Setup-v0.1.10.exe"
     (tmp_path / asset_name).write_bytes(payload)
     manifest = client_release_manifest(asset_name, payload)
     (tmp_path / "latest.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -149,7 +149,7 @@ def test_client_release_latest_returns_revalidated_manifest(tmp_path: Path, monk
     "filename",
     [
         "auth.json",
-        "CWS-Codex-Release-v0.1.9.zip",
+        "CWS-Codex-Release-v0.1.10.zip",
         "..%5Cauth.json",
         "%2e%2e%2fauth.json",
     ],
@@ -230,7 +230,7 @@ def test_client_release_download_returns_validated_bytes_and_fixed_headers(
     assert response.headers["content-type"] == "application/vnd.microsoft.portable-executable"
     assert response.headers["content-length"] == "9"
     assert response.headers["content-disposition"] == (
-        'attachment; filename="CWS-Codex-Setup-v0.1.9.exe"'
+        'attachment; filename="CWS-Codex-Setup-v0.1.10.exe"'
     )
     assert response.headers["cache-control"] == "private"
 
@@ -1339,6 +1339,48 @@ def test_existing_session_model_counters_start_from_upgrade_baseline(tmp_path):
     assert asyncio.run(scenario())["account-a"]["gpt-a"]["total_tokens"] == 15
 
 
+def test_account_employee_window_ranks_five_and_ignores_duplicate_reports(tmp_path):
+    store = DeviceUsageStore(tmp_path / "usage.json")
+    async def scenario():
+        for index in range(6):
+            employee = DeviceIdentity(token_id=f"employee-{index}", label=f"员工{index}", employee_name=f"员工{index}")
+            await store.record_lease(employee, None, None, "account-a", time.time() + 3600)
+            usage = SessionTokenUsage(session_id=f"session-{index}", total_tokens=(index + 1) * 10)
+            await store.record(employee, [usage])
+            await store.record(employee, [usage])
+        return await store.account_employee_windows({"account-a": time.time() - 604800})
+    leaders = asyncio.run(scenario())["account-a"]
+    assert [item["total_tokens"] for item in leaders] == [60, 50, 40, 30, 20]
+    assert leaders[0]["employee_name"] == "员工5"
+
+
+def test_employee_token_increments_follow_server_lease_when_account_changes(tmp_path):
+    store = DeviceUsageStore(tmp_path / "usage.json")
+    employee = DeviceIdentity(token_id="employee", label="员工", employee_name="员工")
+    async def scenario():
+        await store.record_lease(employee, None, None, "account-a", time.time() + 3600)
+        await store.record(employee, [SessionTokenUsage(session_id="session", total_tokens=10)])
+        await store.record_lease(employee, None, None, "account-b", time.time() + 3600)
+        await store.record(employee, [SessionTokenUsage(session_id="session", total_tokens=25)])
+        return await store.account_employee_windows({"account-a": time.time() - 604800, "account-b": time.time() - 604800})
+    usage = asyncio.run(scenario())
+    assert usage["account-a"][0]["total_tokens"] == 10
+    assert usage["account-b"][0]["total_tokens"] == 15
+
+
+def test_admin_accounts_uses_official_seven_day_window_for_employee_leaders(monkeypatch):
+    now = time.time()
+    async def status(refresh_usage=False):
+        return [{"alias": "account-a", "usage": {"rate_limit": {"secondary_window": {"limit_window_seconds": 604800, "reset_at": now + 3600}}}}]
+    async def leaders(starts):
+        assert abs(starts["account-a"] - (now + 3600 - 604800)) < 5
+        return {"account-a": [{"employee_name": "张三", "total_tokens": 123}]}
+    monkeypatch.setattr(broker_module, "broker", SimpleNamespace(account_status=status))
+    monkeypatch.setattr(broker_module, "usage_store", SimpleNamespace(account_employee_windows=leaders))
+    result = asyncio.run(broker_module.list_accounts())
+    assert result["accounts"][0]["top_employees"][0]["total_tokens"] == 123
+
+
 def test_official_401_forces_oauth_refresh_and_retries_usage(tmp_path: Path):
     old_access = jwt({"exp": 2_000_000_000})
     new_access = jwt({"exp": 2_100_000_000})
@@ -1792,7 +1834,7 @@ def test_explicit_lease_account_alias_is_honored(monkeypatch):
 
 def test_client_account_route_requires_device_and_returns_choices(monkeypatch):
     async def choices():
-        return {"version": "0.1.9", "recommended_alias": "chatgpt024", "accounts": []}
+        return {"version": "0.1.10", "recommended_alias": "chatgpt024", "accounts": []}
     broker = SimpleNamespace(client_account_choices=choices)
     monkeypatch.setattr(broker_module, "broker", broker)
     monkeypatch.setattr(broker_module, "require_device", lambda: None)

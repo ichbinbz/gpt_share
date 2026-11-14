@@ -55,6 +55,8 @@ CWS Codex Linux 服务端部署包
 
   http://codex.cws.internal:8765/quota
 
+  每个账号下展示当前官方 7 天额度窗口内客户端上报 Token 用量最多的 5 名员工。按 15 分钟上报时间桶统计，窗口边界最多有 15 分钟误差；功能上线前的历史账号归属无法回填。
+
 - 员工 Token 自助查询入口：
 
   http://codex.cws.internal:8765/token

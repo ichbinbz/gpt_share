@@ -95,7 +95,7 @@ function Get-CwsAccountChoices {
     $Token = Get-CwsDeviceToken -TokenPath $TokenPath
     $Request = @{
         Uri                = $BrokerBase + "/v1/client/accounts"
-        Headers            = @{ Authorization = "Bearer $Token"; "User-Agent" = "CWS-Codex-Windows/0.1.9" }
+        Headers            = @{ Authorization = "Bearer $Token"; "User-Agent" = "CWS-Codex-Windows/0.1.10" }
         TimeoutSec         = 30
         MaximumRedirection = 0
         DisableKeepAlive   = $true
@@ -106,7 +106,7 @@ function Get-CwsAccountChoices {
 }
 
 function Show-CwsAccountChooser {
-    param([Parameter(Mandatory = $true)] $Payload)
+    param([Parameter(Mandatory = $true)] $Payload, [string] $PortalUrl)
 
     $Accounts = @($Payload.accounts | Where-Object { $_.alias })
     $Available = @($Accounts | Where-Object { $_.available -eq $true })
@@ -118,7 +118,7 @@ function Show-CwsAccountChooser {
     $Form.Text = "CWS Codex 账号选择"
     $Form.StartPosition = "CenterScreen"
     $Form.Width = 760
-    $Form.Height = 430
+    $Form.Height = 460
     $Form.MinimizeBox = $false
     $Form.MaximizeBox = $false
     $Title = New-Object System.Windows.Forms.Label
@@ -149,10 +149,19 @@ function Show-CwsAccountChooser {
     if ($recommendedIndex -lt 0) { $recommendedIndex = 0 }
     $List.SelectedIndex = $recommendedIndex
     $Form.Controls.Add($List)
+    if ($PortalUrl) {
+        $PortalLink = New-Object System.Windows.Forms.LinkLabel
+        $PortalLink.Text = "员工账号额度与令牌查询（需连通内网或 SSH 隧道）"
+        $PortalLink.Left = 18
+        $PortalLink.Top = 328
+        $PortalLink.AutoSize = $true
+        $PortalLink.Add_LinkClicked({ Start-Process -FilePath $PortalUrl | Out-Null })
+        $Form.Controls.Add($PortalLink)
+    }
     $Button = New-Object System.Windows.Forms.Button
     $Button.Text = "使用所选账号"
     $Button.Left = 570
-    $Button.Top = 335
+    $Button.Top = 361
     $Button.Width = 152
     $Button.Height = 34
     $Button.Add_Click({

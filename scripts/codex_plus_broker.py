@@ -98,7 +98,9 @@ USER_INPUT_FIELDS = (
 )
 USAGE_FIELDS = TOKEN_FIELDS + USER_INPUT_FIELDS
 USAGE_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
-BROKER_VERSION = "0.1.9"
+ACCOUNT_USAGE_BUCKET_SECONDS = 900
+ACCOUNT_USAGE_RETENTION_SECONDS = 8 * 86400
+BROKER_VERSION = "0.1.10"
 USERNAME_PATTERN = re.compile(r"^[A-Z]{1,16}\.[A-Z]{1,32}$")
 EMPLOYEE_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 PASSWORD_HASH_ITERATIONS = 310_000
@@ -599,6 +601,9 @@ class DeviceUsageStore:
             self._record_ip(device, "client_ip", client_ip, now)
             self._record_ip(device, "source_ip", source_ip, now)
             stored_sessions = device.setdefault("sessions", {})
+            account_alias = device.get("current_account_alias") if float(device.get("lease_expires_at") or 0) > now else None
+            account_employee_usage = state.setdefault("account_employee_usage", {})
+            employee_buckets = account_employee_usage.setdefault(account_alias, {}).setdefault(identity.token_id, {}) if account_alias else None
             for item in sessions:
                 incoming = item.model_dump() if hasattr(item, "model_dump") else item.dict()
                 session_id = incoming.pop("session_id")
@@ -612,7 +617,6 @@ class DeviceUsageStore:
                 if not isinstance(stored_models, dict):
                     stored_models = {}
                     current["model_usage"] = stored_models
-                account_alias = device.get("current_account_alias") if float(device.get("lease_expires_at") or 0) > now else None
                 account_totals = state.setdefault("account_model_usage", {})
                 for model_item in incoming_models:
                     model_data = model_item if isinstance(model_item, dict) else (model_item.model_dump() if hasattr(model_item, "model_dump") else model_item.dict())
@@ -627,6 +631,11 @@ class DeviceUsageStore:
                             delta = 0 if baseline_existing else new - old
                             account_model[field] = max(0, int(account_model.get(field, 0))) + delta
                 for field in USAGE_FIELDS:
+                    if field == "total_tokens" and employee_buckets is not None:
+                        delta = max(0, int(incoming.get(field, 0)) - int(current.get(field, 0)))
+                        if delta:
+                            bucket = str(int(now // ACCOUNT_USAGE_BUCKET_SECONDS) * ACCOUNT_USAGE_BUCKET_SECONDS)
+                            employee_buckets[bucket] = max(0, int(employee_buckets.get(bucket, 0))) + delta
                     current[field] = max(int(current.get(field, 0)), int(incoming.get(field, 0)))
                 stored_days = current.setdefault("daily_usage", {})
                 if not isinstance(stored_days, dict):
@@ -646,6 +655,15 @@ class DeviceUsageStore:
                             int(stored_day.get(field, 0)), int(day.get(field, 0))
                         )
                 current["updated_at"] = now
+            cutoff = now - ACCOUNT_USAGE_RETENTION_SECONDS
+            for account_devices in account_employee_usage.values():
+                if not isinstance(account_devices, dict):
+                    continue
+                for buckets in account_devices.values():
+                    if isinstance(buckets, dict):
+                        for bucket in list(buckets):
+                            if float(bucket) < cutoff:
+                                del buckets[bucket]
             atomic_write_json(self.path, state)
             return {
                 "accepted_sessions": len(sessions),
@@ -657,6 +675,32 @@ class DeviceUsageStore:
         async with self.lock:
             state = self._load()
         return state.get("account_model_usage", {})
+
+    async def account_employee_windows(self, starts: dict[str, float]) -> dict[str, list[dict[str, Any]]]:
+        async with self.lock:
+            state = self._load()
+        usage = state.get("account_employee_usage", {})
+        devices = state.get("devices", {})
+        results: dict[str, list[dict[str, Any]]] = {}
+        for alias, start in starts.items():
+            employees = []
+            account_usage = usage.get(alias, {}) if isinstance(usage, dict) else {}
+            if not isinstance(account_usage, dict):
+                continue
+            for token_id, buckets in account_usage.items():
+                if not isinstance(buckets, dict):
+                    continue
+                total = sum(max(0, int(value)) for bucket, value in buckets.items() if start <= float(bucket) <= time.time())
+                if not total:
+                    continue
+                device = devices.get(token_id, {}) if isinstance(devices, dict) else {}
+                employees.append({
+                    "employee_name": device.get("employee_name") or device.get("device_label") or token_id,
+                    "employee_id": device.get("employee_id"),
+                    "total_tokens": total,
+                })
+            results[alias] = sorted(employees, key=lambda item: item["total_tokens"], reverse=True)[:5]
+        return results
 
     async def summary(
         self, registered_devices: dict[str, dict[str, Any]] | set[str]
@@ -1960,11 +2004,11 @@ async def require_admin(authorization: str | None = Header(default=None)) -> Non
 
 
 RELEASE_MEDIA_TYPES = {
-    "CWS-Codex-Setup-v0.1.9.exe": "application/vnd.microsoft.portable-executable",
-    "CWS-Codex-Release-v0.1.9.zip": "application/zip",
-    "CWS-Codex-Windows-v0.1.9.zip": "application/zip",
-    "CWS-Codex-Linux-v0.1.9.tar.gz": "application/gzip",
-    "CWS-Codex-Server-v0.1.9.tar.gz": "application/gzip",
+    "CWS-Codex-Setup-v0.1.10.exe": "application/vnd.microsoft.portable-executable",
+    "CWS-Codex-Release-v0.1.10.zip": "application/zip",
+    "CWS-Codex-Windows-v0.1.10.zip": "application/zip",
+    "CWS-Codex-Linux-v0.1.10.tar.gz": "application/gzip",
+    "CWS-Codex-Server-v0.1.10.tar.gz": "application/gzip",
 }
 
 WINDOWS_FILE_ATTRIBUTE_DIRECTORY = 0x10
@@ -2452,9 +2496,25 @@ async def report_usage(
 
 @app.get("/v1/admin/accounts", dependencies=[Depends(require_admin)])
 async def list_accounts(refresh: bool = False) -> dict[str, Any]:
+    accounts = await broker.account_status(refresh_usage=refresh)
+    now = time.time()
+    starts: dict[str, float] = {}
+    for account in accounts:
+        usage = account.get("usage") or {}
+        rate_limit = usage.get("rate_limit") if isinstance(usage, dict) else None
+        windows = [rate_limit.get(key) for key in ("primary_window", "secondary_window")] if isinstance(rate_limit, dict) else []
+        seven_day = next((window for window in windows if isinstance(window, dict) and 5 * 86400 <= float(window.get("limit_window_seconds") or 0) <= 9 * 86400), None)
+        duration = float(seven_day.get("limit_window_seconds") or 604800) if seven_day else 604800.0
+        reset_at = float(seven_day.get("reset_at") or 0) if seven_day else 0.0
+        start = reset_at - duration if reset_at > now else now - duration
+        starts[str(account.get("alias"))] = start
+        account["employee_window"] = {"started_at": start, "ends_at": reset_at if reset_at > now else now, "estimated_from_reports": True}
+    leaders = await usage_store.account_employee_windows(starts)
+    for account in accounts:
+        account["top_employees"] = leaders.get(str(account.get("alias")), [])
     return {
         "version": BROKER_VERSION,
-        "accounts": await broker.account_status(refresh_usage=refresh),
+        "accounts": accounts,
         "fetched_at": time.time(),
     }
 

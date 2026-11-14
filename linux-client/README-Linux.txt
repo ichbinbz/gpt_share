@@ -1,4 +1,4 @@
-CWS Codex Ubuntu/Linux 员工端 v0.1.9
+CWS Codex Ubuntu/Linux 员工端 v0.1.10
 =====================================
 
 系统要求：
@@ -7,7 +7,7 @@ CWS Codex Ubuntu/Linux 员工端 v0.1.9
 - systemd 用户服务（建议，用于每 5 分钟自动同步）
 
 安装：
-1. 解压 CWS-Codex-Linux-v0.1.9.tar.gz。
+1. 解压 CWS-Codex-Linux-v0.1.10.tar.gz。
 2. 打开终端进入解压后的目录，不要使用 sudo。
 3. 执行：
 
@@ -27,6 +27,7 @@ CWS Codex Ubuntu/Linux 员工端 v0.1.9
 - 修改代理：cws-codex configure-proxy
 - 启动 VS Code：cws-codex launch
 - 启动时会在终端列出账号可用状态、主/次窗口余量，并预选 Broker 推荐账号。直接回车使用推荐账号，也可以输入其他可用账号编号。
+- 账号列表上方会显示员工账号额度与令牌查询网址；打开前需连通公司内网或 SSH 隧道。
 - 卸载：~/.local/share/cws-codex/uninstall.sh
 
 行为说明：

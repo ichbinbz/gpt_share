@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 
-VERSION = "0.1.9"
+VERSION = "0.1.10"
 GITHUB_REPOSITORY = "ichbinbz/gpt_share"
 INSTALL_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = INSTALL_DIR / "config.json"
@@ -277,7 +277,7 @@ def broker_account_choices(config: dict[str, Any], device_token: str) -> dict[st
     return payload
 
 
-def choose_account(payload: dict[str, Any], input_fn=input) -> str:
+def choose_account(payload: dict[str, Any], input_fn=input, portal_url: str = "") -> str:
     accounts = payload["accounts"]
     recommended = payload.get("recommended_alias")
     available = [item for item in accounts if item.get("available") is True]
@@ -285,6 +285,8 @@ def choose_account(payload: dict[str, Any], input_fn=input) -> str:
         raise RuntimeError("当前没有可用账号")
     positions = {str(item["alias"]): index for index, item in enumerate(available, 1)}
     print("请选择要使用的 Codex 账号：")
+    if portal_url:
+        print(f"员工账号额度与令牌查询（需连通内网或 SSH 隧道）：{portal_url}")
     for index, item in enumerate(accounts, 1):
         windows = item.get("windows") or []
         remaining = ", ".join(
@@ -841,7 +843,10 @@ def launch(config_path: Path = CONFIG_PATH) -> int:
         append_log("launch.log", f"Client update check failed: {exc}")
     config = read_config(config_path)
     token = read_device_token(config_path.parent / "device-token")
-    selected_account = choose_account(broker_account_choices(config, token))
+    selected_account = choose_account(
+        broker_account_choices(config, token),
+        portal_url=str(config["broker_url"]).rstrip("/") + "/employee",
+    )
     vscode = find_vscode(str(config.get("vscode_path") or ""))
     if not vscode:
         raise RuntimeError("未找到 Visual Studio Code，请先安装 VS Code")

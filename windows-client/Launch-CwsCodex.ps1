@@ -20,7 +20,8 @@ if ($StatusOnly) {
 $SelectedAccount = $null
 try {
     $Choices = Get-CwsAccountChoices -Config $Config -TokenPath (Join-Path $PSScriptRoot "device-token.dpapi")
-    $SelectedAccount = Show-CwsAccountChooser -Payload $Choices
+    $PortalUrl = ([string] $Config.broker_url).TrimEnd('/') + '/employee'
+    $SelectedAccount = Show-CwsAccountChooser -Payload $Choices -PortalUrl $PortalUrl
 }
 catch {
     Write-CwsLaunchLog ("Account selection failed: " + $_.Exception.Message)
