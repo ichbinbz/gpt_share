@@ -1706,6 +1706,7 @@ class TokenBroker:
                 "lease_id": lease_id,
                 "lease_expires_at": lease_expires,
                 "account_alias": alias,
+                "account_username": account_usernames(self.accounts).get(alias, alias),
                 "account_id": account_id,
                 "plan_type": token_plan_type(access_token),
                 "access_token": access_token,

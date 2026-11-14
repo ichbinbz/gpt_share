@@ -37,7 +37,7 @@ async function load(){
         if(reset)quotaDetails.push(`${name}额度重置：${reset.toLocaleString()}`);
       }
       const quota=add(card,'span',quotas.join(' · ')||'额度未知','quota');quota.title=quotaDetails.join('；');
-      const models=[...(account.models||[]),...(account.unlisted_model_usage||[])];
+      const models=[...(account.models||[])];
       const total=models.reduce((sum,model)=>sum+Number(model.token_usage?.total_tokens||0),0);
       add(card,'span',`总 ${million(total)}M`,'total');
       const tags=add(card,'div','','models');
