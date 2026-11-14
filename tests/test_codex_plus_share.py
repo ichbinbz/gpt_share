@@ -2031,6 +2031,8 @@ def test_quota_dashboard_renders_sanitized_model_health_through_safe_dom_nodes()
 
     assert "model_health" in dashboard
     assert "renderModelHealth" in dashboard
+    assert "model-tags" in dashboard
+    assert "tag.title=" in dashboard
     for label in ("模型可用", "容量超限", "额度耗尽", "鉴权失败", "不支持", "探测异常", "探测未知"):
         assert label in dashboard
     assert "innerHTML" not in dashboard
