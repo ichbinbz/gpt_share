@@ -171,6 +171,11 @@ def normalize_codex_device_usage(payload: Any) -> dict[str, Any] | None:
             if payload.get("current_account_alias")
             else None
         ),
+        "current_account_username": (
+            str(payload.get("current_account_username"))
+            if payload.get("current_account_username")
+            else None
+        ),
         "lease_expires_at": _number(payload.get("lease_expires_at")),
         "first_seen_at": _number(payload.get("first_seen_at")),
         "last_seen_at": _number(payload.get("last_seen_at")),

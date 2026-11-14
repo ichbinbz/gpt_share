@@ -166,6 +166,7 @@ def test_admin_dashboard_displays_each_employees_current_account():
     dashboard = (ROOT / "scripts" / "codex_quota_dashboard.html").read_text(encoding="utf-8")
     assert "当前账号" in dashboard
     assert "current_account_alias" in dashboard
+    assert "current_account_username" in dashboard
     assert "lease_expires_at" in dashboard
 
 

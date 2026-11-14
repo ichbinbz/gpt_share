@@ -23,6 +23,7 @@ from scripts.codex_plus_broker import (
     TokenBroker,
     account_selection_key,
     client_account_choices_from_statuses,
+    account_usernames,
     create_portal_user,
     derive_user_device_token,
     find_portal_user,
@@ -1172,6 +1173,19 @@ def test_reads_real_account_email_from_server_owned_token_claims():
     id_token = jwt({"email": "employee@example.com"})
     assert token_email(id_token, None) == "employee@example.com"
     assert token_email("invalid", jwt({"preferred_username": "fallback@example.com"})) == "fallback@example.com"
+
+
+def test_account_usernames_map_internal_alias_to_login_name():
+    class Account:
+        def __init__(self, email):
+            self.email = email
+
+        def read_auth(self):
+            return {"tokens": {"id_token": jwt({"email": self.email})}}
+
+    assert account_usernames({"account-05": Account("chatgpt010@example.com")}) == {
+        "account-05": "chatgpt010"
+    }
 
 
 def test_client_auth_uses_official_external_chatgpt_mode_without_refresh_token():

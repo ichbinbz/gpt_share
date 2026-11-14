@@ -310,6 +310,20 @@ def token_email(*tokens: str | None) -> str | None:
     return None
 
 
+def account_usernames(accounts: dict[str, Any]) -> dict[str, str]:
+    """Resolve internal aliases to login names without exposing auth tokens."""
+    usernames: dict[str, str] = {}
+    for alias, account in accounts.items():
+        try:
+            tokens = account.read_auth()["tokens"]
+            email = token_email(tokens.get("id_token"), tokens.get("access_token"))
+        except (KeyError, OSError, ValueError, TypeError):
+            continue
+        if email:
+            usernames[alias] = email.split("@", 1)[0]
+    return usernames
+
+
 def atomic_write_json(path: Path, payload: dict[str, Any], mode: int = 0o600) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
@@ -2297,9 +2311,13 @@ async def list_accounts(refresh: bool = False) -> dict[str, Any]:
 
 @app.get("/v1/admin/device-usage", dependencies=[Depends(require_admin)])
 async def list_device_usage() -> dict[str, Any]:
+    devices = await usage_store.summary(_device_registry_summary())
+    usernames = account_usernames(broker.accounts)
+    for device in devices:
+        device["current_account_username"] = usernames.get(device.get("current_account_alias"))
     return {
         "version": BROKER_VERSION,
-        "devices": await usage_store.summary(_device_registry_summary()),
+        "devices": devices,
         "fetched_at": time.time(),
     }
 
