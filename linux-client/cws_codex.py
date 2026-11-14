@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 
-VERSION = "0.1.10"
+VERSION = "0.1.11"
 GITHUB_REPOSITORY = "ichbinbz/gpt_share"
 INSTALL_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = INSTALL_DIR / "config.json"
@@ -295,7 +295,7 @@ def choose_account(payload: dict[str, Any], input_fn=input, portal_url: str = ""
         ) or "余量未知"
         marker = "（推荐）" if item.get("recommended") or item.get("alias") == recommended else ""
         state = "可用" if item.get("available") else f"不可用：{item.get('status', 'unknown')}"
-        print(f"  {index}. {item['alias']} [{state}] {remaining} {marker}")
+        print(f"  {index}. {item.get('username') or item['alias']} [{state}] {remaining} {marker}")
     default_alias = str(recommended) if recommended in positions else str(available[0]["alias"])
     while True:
         choice = input_fn(f"输入账号编号（直接回车使用 {default_alias}）：").strip()
@@ -833,6 +833,9 @@ def append_log(name: str, message: str) -> None:
 
 
 def launch(config_path: Path = CONFIG_PATH) -> int:
+    config = read_config(config_path)
+    portal_url = str(config["broker_url"]).rstrip("/") + "/employee"
+    print(f"员工账号额度与令牌查询（需连通公司内网或 SSH 隧道）：{portal_url}", flush=True)
     try:
         if check_for_update(config_path):
             os.execv(
@@ -845,7 +848,7 @@ def launch(config_path: Path = CONFIG_PATH) -> int:
     token = read_device_token(config_path.parent / "device-token")
     selected_account = choose_account(
         broker_account_choices(config, token),
-        portal_url=str(config["broker_url"]).rstrip("/") + "/employee",
+        portal_url=portal_url,
     )
     vscode = find_vscode(str(config.get("vscode_path") or ""))
     if not vscode:

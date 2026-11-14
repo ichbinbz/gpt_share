@@ -95,7 +95,7 @@ function Get-CwsAccountChoices {
     $Token = Get-CwsDeviceToken -TokenPath $TokenPath
     $Request = @{
         Uri                = $BrokerBase + "/v1/client/accounts"
-        Headers            = @{ Authorization = "Bearer $Token"; "User-Agent" = "CWS-Codex-Windows/0.1.10" }
+        Headers            = @{ Authorization = "Bearer $Token"; "User-Agent" = "CWS-Codex-Windows/0.1.11" }
         TimeoutSec         = 30
         MaximumRedirection = 0
         DisableKeepAlive   = $true
@@ -140,7 +140,8 @@ function Show-CwsAccountChooser {
         $state = if ($Account.available -eq $true) { "可用" } else { "不可用：$($Account.status)" }
         $marker = if ($Account.recommended -eq $true -or [string]$Account.alias -eq [string]$Payload.recommended_alias) { "（推荐）" } else { "" }
         $Rows += $Account
-        [void] $List.Items.Add("$($Account.alias)    $state    $remaining    $marker")
+        $LoginName = if ($Account.username) { [string] $Account.username } else { [string] $Account.alias }
+        [void] $List.Items.Add("$LoginName    $state    $remaining    $marker")
     }
     $recommendedIndex = -1
     for ($i = 0; $i -lt $Rows.Count; $i++) {

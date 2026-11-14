@@ -17,10 +17,11 @@ if ($StatusOnly) {
     Write-Host "CWS Codex 员工端 v$([string] $Config.client_version)"
     return
 }
+$PortalUrl = ([string] $Config.broker_url).TrimEnd('/') + '/employee'
+Write-Host "员工账号额度与令牌查询（需连通公司内网或 SSH 隧道）：$PortalUrl" -ForegroundColor Cyan
 $SelectedAccount = $null
 try {
     $Choices = Get-CwsAccountChoices -Config $Config -TokenPath (Join-Path $PSScriptRoot "device-token.dpapi")
-    $PortalUrl = ([string] $Config.broker_url).TrimEnd('/') + '/employee'
     $SelectedAccount = Show-CwsAccountChooser -Payload $Choices -PortalUrl $PortalUrl
 }
 catch {

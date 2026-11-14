@@ -64,7 +64,7 @@ def probe_account(tmp_path: Path, payload: dict | None = None) -> AccountRecord:
 
 def client_release_manifest(asset_name: str, payload: bytes) -> dict:
     return {
-        "release_version": "0.1.10",
+        "release_version": "0.1.11",
         "published_at": "2026-09-18T00:00:00Z",
         "assets": [
             {
@@ -79,7 +79,7 @@ def client_release_manifest(asset_name: str, payload: bytes) -> dict:
 
 
 def configure_client_release(tmp_path: Path, monkeypatch, payload: bytes = b"installer"):
-    asset_name = "CWS-Codex-Setup-v0.1.10.exe"
+    asset_name = "CWS-Codex-Setup-v0.1.11.exe"
     (tmp_path / asset_name).write_bytes(payload)
     manifest = client_release_manifest(asset_name, payload)
     (tmp_path / "latest.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -149,7 +149,7 @@ def test_client_release_latest_returns_revalidated_manifest(tmp_path: Path, monk
     "filename",
     [
         "auth.json",
-        "CWS-Codex-Release-v0.1.10.zip",
+        "CWS-Codex-Release-v0.1.11.zip",
         "..%5Cauth.json",
         "%2e%2e%2fauth.json",
     ],
@@ -230,7 +230,7 @@ def test_client_release_download_returns_validated_bytes_and_fixed_headers(
     assert response.headers["content-type"] == "application/vnd.microsoft.portable-executable"
     assert response.headers["content-length"] == "9"
     assert response.headers["content-disposition"] == (
-        'attachment; filename="CWS-Codex-Setup-v0.1.10.exe"'
+        'attachment; filename="CWS-Codex-Setup-v0.1.11.exe"'
     )
     assert response.headers["cache-control"] == "private"
 
@@ -1783,7 +1783,7 @@ def test_lease_returns_sanitized_503_when_every_account_is_explicitly_blocked(mo
 def test_client_account_choices_include_remaining_windows_and_recommendation(monkeypatch):
     result = client_account_choices_from_statuses([
         {
-            "alias": "chatgpt011", "available": True, "plan_type": "pro", "active_leases": 0,
+            "alias": "account-02", "email": "chatgpt011@example.com", "available": True, "plan_type": "pro", "active_leases": 0,
             "usage": {"rate_limit": {"primary_window": {"used_percent": 60, "reset_after_seconds": 3600}}},
             "model_health": {"available": True, "models": []},
         },
@@ -1796,12 +1796,12 @@ def test_client_account_choices_include_remaining_windows_and_recommendation(mon
     assert result["recommended_alias"] == "chatgpt024"
     assert result["accounts"] == [
         {
-            "alias": "chatgpt011", "available": True, "plan_type": "pro", "active_leases": 0,
+            "alias": "account-02", "username": "chatgpt011", "available": True, "plan_type": "pro", "active_leases": 0,
             "recommended": False,
             "windows": [{"name": "primary", "remaining_percent": 40, "reset_after_seconds": 3600}],
         },
         {
-            "alias": "chatgpt024", "available": True, "plan_type": "pro", "active_leases": 0,
+            "alias": "chatgpt024", "username": "chatgpt024", "available": True, "plan_type": "pro", "active_leases": 0,
             "recommended": True,
             "windows": [{"name": "primary", "remaining_percent": 90, "reset_after_seconds": 7200}],
         },
@@ -1851,7 +1851,7 @@ def test_explicit_lease_account_alias_is_honored(monkeypatch):
 
 def test_client_account_route_requires_device_and_returns_choices(monkeypatch):
     async def choices():
-        return {"version": "0.1.10", "recommended_alias": "chatgpt024", "accounts": []}
+        return {"version": "0.1.11", "recommended_alias": "chatgpt024", "accounts": []}
     broker = SimpleNamespace(client_account_choices=choices)
     monkeypatch.setattr(broker_module, "broker", broker)
     monkeypatch.setattr(broker_module, "require_device", lambda: None)

@@ -151,6 +151,8 @@ def test_launcher_shows_account_picker_before_sync_and_sync_accepts_selected_ali
     assert "Show-CwsAccountChooser -Payload $Choices" in launcher
     assert "'/employee'" in launcher
     assert "LinkLabel" in common and "员工账号额度与令牌查询" in common
+    assert "$Account.username" in common
+    assert "Write-Host \"员工账号额度与令牌查询" in launcher
     assert "$Body.account_alias = $AccountAlias" in sync
     assert "当前没有可用的 Codex 账号" in common
 
