@@ -9,7 +9,7 @@ import tarfile
 from pathlib import Path, PurePosixPath
 
 
-VERSION = "0.1.8"
+VERSION = "0.1.9"
 ARCHIVE_ROOT = f"CWS-Codex-Server-v{VERSION}"
 PACKAGE_FILES = {
     Path("server-package/README-Server.txt"): Path("README-Server.txt"),
@@ -23,6 +23,7 @@ PACKAGE_FILES = {
     Path("scripts/import_employee_tokens_xlsx.py"): Path("import_employee_tokens_xlsx.py"),
     Path("scripts/codex_quota_dashboard.html"): Path("codex_quota_dashboard.html"),
     Path("scripts/codex_token_portal.html"): Path("codex_token_portal.html"),
+    Path("scripts/codex_employee_dashboard.html"): Path("codex_employee_dashboard.html"),
     Path("deploy/cws-codex-broker.env.example"): Path("cws-codex-broker.env.example"),
     Path("deploy/cws-codex-broker.service"): Path("cws-codex-broker.service"),
     Path("CODEX_PLUS_SHARE.zh-CN.md"): Path("CODEX_PLUS_SHARE.zh-CN.md"),

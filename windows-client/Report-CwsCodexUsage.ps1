@@ -125,6 +125,8 @@ foreach ($File in Get-ChildItem -LiteralPath $SessionsRoot -Filter "*.jsonl" -Re
     $Latest = $null
     $Previous = @{}
     $Daily = @{}
+    $ModelUsage = @{}
+    $CurrentModel = 'unknown'
     $UserMessageCount = [int64] 0
     $UserTextCharacters = [int64] 0
     $UserTextTokensEstimated = [int64] 0
@@ -136,17 +138,24 @@ foreach ($File in Get-ChildItem -LiteralPath $SessionsRoot -Filter "*.jsonl" -Re
         $Reader = New-Object System.IO.StreamReader($Stream, [Text.Encoding]::UTF8, $true)
         while (-not $Reader.EndOfStream) {
             $Line = $Reader.ReadLine()
-            if ($Line -notmatch '"token_count"' -and $Line -notmatch '"user_message"') { continue }
+            if ($Line -notmatch '"token_count"' -and $Line -notmatch '"user_message"' -and $Line -notmatch '"turn_context"') { continue }
             try {
                 $Event = $Line | ConvertFrom-Json
+                if ($Event.type -eq 'turn_context') {
+                    $ModelName = [string] $Event.payload.model
+                    $CurrentModel = if ($ModelName) { $ModelName.Substring(0, [Math]::Min(100, $ModelName.Length)) } else { 'unknown' }
+                    continue
+                }
                 if ($Event.payload.type -eq "token_count" -and $Event.payload.info.total_token_usage) {
                     $Latest = $Event.payload.info.total_token_usage
                     $Bucket = Get-CwsDailyBucket -Buckets $Daily -Date (Get-CwsUsageDate $Event.timestamp)
+                    if (-not $ModelUsage.ContainsKey($CurrentModel)) { $ModelUsage[$CurrentModel] = @{} }
                     foreach ($Field in @("input_tokens", "cached_input_tokens", "cache_write_input_tokens", "output_tokens", "reasoning_output_tokens", "total_tokens")) {
                         $Current = Get-CwsTokenCount $Latest.$Field
                         $Before = Get-CwsTokenCount $Previous[$Field]
                         $Delta = if ($Current -ge $Before) { $Current - $Before } else { $Current }
                         $Bucket[$Field] += $Delta
+                        $ModelUsage[$CurrentModel][$Field] = (Get-CwsTokenCount $ModelUsage[$CurrentModel][$Field]) + $Delta
                         $Previous[$Field] = $Current
                     }
                 }
@@ -191,6 +200,7 @@ foreach ($File in Get-ChildItem -LiteralPath $SessionsRoot -Filter "*.jsonl" -Re
         user_text_characters       = $UserTextCharacters
         user_text_tokens_estimated = $UserTextTokensEstimated
         daily_usage                = @($Daily.Values | Sort-Object date)
+        model_usage                = @($ModelUsage.Keys | Sort-Object | ForEach-Object { @{ model = $_; input_tokens = (Get-CwsTokenCount $ModelUsage[$_].input_tokens); cached_input_tokens = (Get-CwsTokenCount $ModelUsage[$_].cached_input_tokens); cache_write_input_tokens = (Get-CwsTokenCount $ModelUsage[$_].cache_write_input_tokens); output_tokens = (Get-CwsTokenCount $ModelUsage[$_].output_tokens); reasoning_output_tokens = (Get-CwsTokenCount $ModelUsage[$_].reasoning_output_tokens); total_tokens = (Get-CwsTokenCount $ModelUsage[$_].total_tokens) } })
     })
 }
 

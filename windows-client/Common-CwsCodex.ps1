@@ -95,7 +95,7 @@ function Get-CwsAccountChoices {
     $Token = Get-CwsDeviceToken -TokenPath $TokenPath
     $Request = @{
         Uri                = $BrokerBase + "/v1/client/accounts"
-        Headers            = @{ Authorization = "Bearer $Token"; "User-Agent" = "CWS-Codex-Windows/0.1.8" }
+        Headers            = @{ Authorization = "Bearer $Token"; "User-Agent" = "CWS-Codex-Windows/0.1.9" }
         TimeoutSec         = 30
         MaximumRedirection = 0
         DisableKeepAlive   = $true

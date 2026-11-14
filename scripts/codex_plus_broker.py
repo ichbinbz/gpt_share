@@ -98,7 +98,7 @@ USER_INPUT_FIELDS = (
 )
 USAGE_FIELDS = TOKEN_FIELDS + USER_INPUT_FIELDS
 USAGE_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
-BROKER_VERSION = "0.1.8"
+BROKER_VERSION = "0.1.9"
 USERNAME_PATTERN = re.compile(r"^[A-Z]{1,16}\.[A-Z]{1,32}$")
 EMPLOYEE_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 PASSWORD_HASH_ITERATIONS = 310_000
@@ -448,6 +448,11 @@ class PortalTokenQueryRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class TokenApplicationRequest(BaseModel):
+    employee_name: str = Field(min_length=2, max_length=64)
+    employee_id: str = Field(min_length=1, max_length=64)
+
+
 class DailySessionUsage(BaseModel):
     date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     input_tokens: int = Field(default=0, ge=0, le=10**15)
@@ -461,10 +466,21 @@ class DailySessionUsage(BaseModel):
     user_text_tokens_estimated: int = Field(default=0, ge=0, le=10**15)
 
 
+class ModelTokenUsage(BaseModel):
+    model: str = Field(min_length=1, max_length=100)
+    input_tokens: int = Field(default=0, ge=0, le=10**15)
+    cached_input_tokens: int = Field(default=0, ge=0, le=10**15)
+    cache_write_input_tokens: int = Field(default=0, ge=0, le=10**15)
+    output_tokens: int = Field(default=0, ge=0, le=10**15)
+    reasoning_output_tokens: int = Field(default=0, ge=0, le=10**15)
+    total_tokens: int = Field(default=0, ge=0, le=10**15)
+
+
 class SessionTokenUsage(DailySessionUsage):
     session_id: str = Field(min_length=1, max_length=200)
     date: str = Field(default="1970-01-01", exclude=True)
     daily_usage: list[DailySessionUsage] = Field(default_factory=list, max_length=4000)
+    model_usage: list[ModelTokenUsage] = Field(default_factory=list, max_length=100)
 
 
 class UsageReport(BaseModel):
@@ -587,8 +603,29 @@ class DeviceUsageStore:
                 incoming = item.model_dump() if hasattr(item, "model_dump") else item.dict()
                 session_id = incoming.pop("session_id")
                 incoming_days = incoming.pop("daily_usage", [])
+                incoming_models = incoming.pop("model_usage", [])
                 incoming.pop("date", None)
+                prior_session = stored_sessions.get(session_id)
+                baseline_existing = isinstance(prior_session, dict) and not prior_session.get("model_usage")
                 current = stored_sessions.setdefault(session_id, {})
+                stored_models = current.setdefault("model_usage", {})
+                if not isinstance(stored_models, dict):
+                    stored_models = {}
+                    current["model_usage"] = stored_models
+                account_alias = device.get("current_account_alias") if float(device.get("lease_expires_at") or 0) > now else None
+                account_totals = state.setdefault("account_model_usage", {})
+                for model_item in incoming_models:
+                    model_data = model_item if isinstance(model_item, dict) else (model_item.model_dump() if hasattr(model_item, "model_dump") else model_item.dict())
+                    model_name = model_data["model"]
+                    saved_model = stored_models.setdefault(model_name, {})
+                    account_model = account_totals.setdefault(account_alias, {}).setdefault(model_name, {}) if account_alias else None
+                    for field in TOKEN_FIELDS:
+                        old = max(0, int(saved_model.get(field, 0)))
+                        new = max(old, int(model_data.get(field, 0)))
+                        saved_model[field] = new
+                        if account_model is not None:
+                            delta = 0 if baseline_existing else new - old
+                            account_model[field] = max(0, int(account_model.get(field, 0))) + delta
                 for field in USAGE_FIELDS:
                     current[field] = max(int(current.get(field, 0)), int(incoming.get(field, 0)))
                 stored_days = current.setdefault("daily_usage", {})
@@ -615,6 +652,11 @@ class DeviceUsageStore:
                 "device_token_id": identity.token_id,
                 "reported_at": now,
             }
+
+    async def account_model_summary(self) -> dict[str, Any]:
+        async with self.lock:
+            state = self._load()
+        return state.get("account_model_usage", {})
 
     async def summary(
         self, registered_devices: dict[str, dict[str, Any]] | set[str]
@@ -1758,6 +1800,29 @@ def portal_users() -> list[dict[str, Any]]:
 settings = BrokerSettings.from_env()
 broker = TokenBroker(settings)
 usage_store = DeviceUsageStore(settings.usage_state_file)
+token_application_file = settings.usage_state_file.with_name("token-applications.json")
+token_application_lock = asyncio.Lock()
+token_application_submissions: dict[str, list[float]] = {}
+
+
+def normalized_employee_name(value: str) -> str:
+    name = value.strip()
+    if len(name) < 2 or len(name) > 64 or any(char.isspace() for char in name):
+        raise ValueError("employee name must contain 2 to 64 non-space characters")
+    return name
+
+
+def application_username(employee_id: str) -> str:
+    digest = hashlib.sha256(employee_id.encode("utf-8")).hexdigest()[:20]
+    return "EMP." + "".join(chr(65 + int(char, 16)) for char in digest)
+
+
+def load_token_applications() -> list[dict[str, Any]]:
+    try:
+        data = json.loads(token_application_file.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return []
+    return data if isinstance(data, list) else []
 
 
 @asynccontextmanager
@@ -1895,11 +1960,11 @@ async def require_admin(authorization: str | None = Header(default=None)) -> Non
 
 
 RELEASE_MEDIA_TYPES = {
-    "CWS-Codex-Setup-v0.1.8.exe": "application/vnd.microsoft.portable-executable",
-    "CWS-Codex-Release-v0.1.8.zip": "application/zip",
-    "CWS-Codex-Windows-v0.1.8.zip": "application/zip",
-    "CWS-Codex-Linux-v0.1.8.tar.gz": "application/gzip",
-    "CWS-Codex-Server-v0.1.8.tar.gz": "application/gzip",
+    "CWS-Codex-Setup-v0.1.9.exe": "application/vnd.microsoft.portable-executable",
+    "CWS-Codex-Release-v0.1.9.zip": "application/zip",
+    "CWS-Codex-Windows-v0.1.9.zip": "application/zip",
+    "CWS-Codex-Linux-v0.1.9.tar.gz": "application/gzip",
+    "CWS-Codex-Server-v0.1.9.tar.gz": "application/gzip",
 }
 
 WINDOWS_FILE_ATTRIBUTE_DIRECTORY = 0x10
@@ -2215,6 +2280,91 @@ async def token_portal() -> HTMLResponse:
         raise HTTPException(status_code=503, detail="token portal asset is unavailable")
 
 
+@app.get("/employee", response_class=HTMLResponse, include_in_schema=False)
+async def employee_dashboard() -> HTMLResponse:
+    try:
+        return HTMLResponse(Path(__file__).with_name("codex_employee_dashboard.html").read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
+    except OSError:
+        raise HTTPException(status_code=503, detail="employee dashboard asset is unavailable")
+
+
+@app.get("/v1/public/accounts")
+async def public_account_usage() -> dict[str, Any]:
+    accounts = await broker.account_status(refresh_usage=False)
+    model_totals = await usage_store.account_model_summary()
+    safe_accounts = []
+    for account in accounts:
+        alias = account.get("alias")
+        email = account.get("email")
+        usage = account.get("usage") or {}
+        rate = usage.get("rate_limit") if isinstance(usage, dict) else {}
+        health = account.get("model_health") or {}
+        models = health.get("models") if isinstance(health, dict) else []
+        safe_rate = {}
+        if isinstance(rate, dict):
+            for window_name in ("primary_window", "secondary_window"):
+                window = rate.get(window_name)
+                if isinstance(window, dict):
+                    safe_rate[window_name] = {key: window.get(key) for key in ("used_percent", "limit_window_seconds", "reset_at", "reset_after_seconds")}
+            safe_rate["limit_reached"] = bool(rate.get("limit_reached", False))
+        safe_accounts.append({
+            "username": str(email).split("@", 1)[0] if email else alias,
+            "available": bool(account.get("available")),
+            "plan_type": account.get("plan_type"),
+            "rate_limit": safe_rate,
+            "models": [{"name": model.get("name"), "available": model.get("available"), "status": model.get("status"), "probe_successes": model.get("probe_successes"), "probe_attempts": model.get("probe_attempts"), "token_usage": (model_totals.get(alias) or {}).get(model.get("name"), {})} for model in models if isinstance(model, dict)] if isinstance(models, list) else [],
+            "unlisted_model_usage": [{"name": name, "token_usage": counts} for name, counts in (model_totals.get(alias) or {}).items() if name not in {model.get("name") for model in models if isinstance(model, dict)}],
+        })
+    return {"accounts": safe_accounts, "fetched_at": time.time()}
+
+
+@app.post("/v1/token/applications")
+async def apply_for_token(request: TokenApplicationRequest, http_request: FastAPIRequest) -> dict[str, Any]:
+    try:
+        name = normalized_employee_name(request.employee_name)
+        employee_id = normalize_employee_id(request.employee_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    key = token_query_key(http_request, "application-submit")
+    async with token_application_lock:
+        now = time.time()
+        recent = [value for value in token_application_submissions.get(key, []) if now - value < 86400]
+        if len(recent) >= 30:
+            raise HTTPException(status_code=429, detail="too many token applications")
+        if any(str(device.get("employee_id")) == employee_id for device in load_device_registry().get("devices", []) if isinstance(device, dict)):
+            raise HTTPException(status_code=409, detail="employee id already exists")
+        applications = load_token_applications()
+        if any(item.get("employee_id") == employee_id and item.get("status") == "pending" for item in applications):
+            raise HTTPException(status_code=409, detail="application already pending")
+        applications.append({"id": str(uuid.uuid4()), "employee_name": name, "employee_id": employee_id, "status": "pending", "created_at": datetime.now(timezone.utc).isoformat()})
+        atomic_write_json(token_application_file, applications)
+        token_application_submissions[key] = recent + [now]
+    return {"status": "pending"}
+
+
+@app.post("/v1/token/applications/claim")
+async def claim_approved_token(request: TokenApplicationRequest, http_request: FastAPIRequest, response: Response) -> dict[str, Any]:
+    key = token_query_key(http_request, "application-claim")
+    await enforce_token_query_limit(key)
+    try:
+        name = normalized_employee_name(request.employee_name)
+        employee_id = normalize_employee_id(request.employee_id)
+    except ValueError:
+        await record_token_query_failure(key)
+        raise HTTPException(status_code=401, detail="application not approved")
+    matching = next((item for item in load_token_applications() if item.get("employee_name") == name and item.get("employee_id") == employee_id and item.get("status") == "approved"), None)
+    user = find_portal_user(load_device_registry(), matching.get("username", "")) if matching else None
+    if not user or not user.get("enabled") or not settings.user_token_secret:
+        await record_token_query_failure(key)
+        raise HTTPException(status_code=401, detail="application not approved")
+    token = derive_user_device_token(settings.user_token_secret, user["username"], employee_id)
+    if not hmac.compare_digest(hashlib.sha256(token.encode()).hexdigest(), str(user.get("token_hash") or "")):
+        raise HTTPException(status_code=503, detail="user token secret does not match registry")
+    await clear_token_query_failures(key)
+    response.headers["Cache-Control"] = "no-store"
+    return {"username": user["username"], "device_token": token}
+
+
 @app.post("/v1/token/query")
 async def query_own_token(
     request: PortalTokenQueryRequest,
@@ -2325,6 +2475,41 @@ async def list_device_usage() -> dict[str, Any]:
 @app.get("/v1/admin/users", dependencies=[Depends(require_admin)])
 async def list_portal_users() -> dict[str, Any]:
     return {"version": BROKER_VERSION, "users": portal_users(), "fetched_at": time.time()}
+
+
+@app.get("/v1/admin/token-applications", dependencies=[Depends(require_admin)])
+async def list_token_applications() -> dict[str, Any]:
+    return {"applications": load_token_applications()}
+
+
+@app.post("/v1/admin/token-applications/{application_id}/approve", dependencies=[Depends(require_admin)])
+async def approve_token_application(application_id: str) -> dict[str, Any]:
+    if not settings.user_token_secret:
+        raise HTTPException(status_code=503, detail="user token secret is not configured")
+    async with token_application_lock:
+        applications = load_token_applications()
+        application = next((item for item in applications if item.get("id") == application_id), None)
+        if not application:
+            raise HTTPException(status_code=404, detail="application not found")
+        if application.get("status") != "pending":
+            raise HTTPException(status_code=409, detail="application already processed")
+        employee_id = application["employee_id"]
+        username = application_username(employee_id)
+        async with device_registry_write_lock:
+            try:
+                def create_approved_user(registry: dict[str, Any]) -> tuple[dict[str, Any], str]:
+                    existing = find_portal_user(registry, username)
+                    if existing and existing.get("employee_id") == employee_id and existing.get("employee_name") == application["employee_name"]:
+                        return existing, ""
+                    created, token = create_portal_user(registry, username, employee_id, settings.user_token_secret or "")
+                    created["employee_name"] = application["employee_name"]
+                    return created, token
+                user, _ = save_device_registry_with_lock(create_approved_user)
+            except ValueError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+        application.update(status="approved", username=username, approved_at=datetime.now(timezone.utc).isoformat())
+        atomic_write_json(token_application_file, applications)
+    return {"application": application}
 
 
 @app.post("/v1/admin/users", dependencies=[Depends(require_admin)])

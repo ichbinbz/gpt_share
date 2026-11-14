@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 
-VERSION = "0.1.8"
+VERSION = "0.1.9"
 GITHUB_REPOSITORY = "ichbinbz/gpt_share"
 INSTALL_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = INSTALL_DIR / "config.json"
@@ -727,24 +727,33 @@ def collect_session_usage(
         previous = {field: 0 for field in TOKEN_FIELDS}
         daily: dict[str, dict[str, Any]] = {}
         user_totals = {field: 0 for field in USER_INPUT_FIELDS}
+        model_usage: dict[str, dict[str, int]] = {}
+        current_model = "unknown"
         try:
             with path.open("r", encoding="utf-8", errors="replace") as handle:
                 for line in handle:
-                    if '"token_count"' not in line and '"user_message"' not in line:
+                    if '"token_count"' not in line and '"user_message"' not in line and '"turn_context"' not in line:
                         continue
                     try:
                         event = json.loads(line)
                         payload = event.get("payload", {})
+                        if event.get("type") == "turn_context":
+                            model = payload.get("model")
+                            current_model = model[:100] if isinstance(model, str) and model else "unknown"
+                            continue
                         info = payload.get("info") or {}
                         total = info.get("total_token_usage")
                         if payload.get("type") == "token_count" and isinstance(total, dict):
                             latest = total
                             date = usage_date(event.get("timestamp"))
                             bucket = daily.setdefault(date, empty_daily_usage(date))
+                            model_bucket = model_usage.setdefault(current_model, {field: 0 for field in TOKEN_FIELDS})
                             for field in TOKEN_FIELDS:
                                 current = safe_token_count(total.get(field))
                                 before = previous[field]
-                                bucket[field] += current - before if current >= before else current
+                                delta = current - before if current >= before else current
+                                bucket[field] += delta
+                                model_bucket[field] += delta
                                 previous[field] = current
                         elif payload.get("type") == "user_message":
                             message = payload.get("message")
@@ -772,6 +781,7 @@ def collect_session_usage(
         record.update({field: safe_token_count(latest.get(field)) for field in TOKEN_FIELDS})
         record.update(user_totals)
         record["daily_usage"] = [daily[date] for date in sorted(daily)]
+        record["model_usage"] = [{"model": model, **counts} for model, counts in sorted(model_usage.items())]
         sessions.append(record)
     return sessions
 

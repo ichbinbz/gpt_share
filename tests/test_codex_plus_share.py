@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -63,7 +64,7 @@ def probe_account(tmp_path: Path, payload: dict | None = None) -> AccountRecord:
 
 def client_release_manifest(asset_name: str, payload: bytes) -> dict:
     return {
-        "release_version": "0.1.8",
+        "release_version": "0.1.9",
         "published_at": "2026-09-18T00:00:00Z",
         "assets": [
             {
@@ -78,7 +79,7 @@ def client_release_manifest(asset_name: str, payload: bytes) -> dict:
 
 
 def configure_client_release(tmp_path: Path, monkeypatch, payload: bytes = b"installer"):
-    asset_name = "CWS-Codex-Setup-v0.1.8.exe"
+    asset_name = "CWS-Codex-Setup-v0.1.9.exe"
     (tmp_path / asset_name).write_bytes(payload)
     manifest = client_release_manifest(asset_name, payload)
     (tmp_path / "latest.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -148,7 +149,7 @@ def test_client_release_latest_returns_revalidated_manifest(tmp_path: Path, monk
     "filename",
     [
         "auth.json",
-        "CWS-Codex-Release-v0.1.8.zip",
+        "CWS-Codex-Release-v0.1.9.zip",
         "..%5Cauth.json",
         "%2e%2e%2fauth.json",
     ],
@@ -229,7 +230,7 @@ def test_client_release_download_returns_validated_bytes_and_fixed_headers(
     assert response.headers["content-type"] == "application/vnd.microsoft.portable-executable"
     assert response.headers["content-length"] == "9"
     assert response.headers["content-disposition"] == (
-        'attachment; filename="CWS-Codex-Setup-v0.1.8.exe"'
+        'attachment; filename="CWS-Codex-Setup-v0.1.9.exe"'
     )
     assert response.headers["cache-control"] == "private"
 
@@ -1274,6 +1275,70 @@ def test_admin_creates_user_and_user_queries_token_without_plaintext_storage(
     ).status_code == 401
 
 
+def test_new_employee_application_requires_admin_approval_and_name_id_to_claim(tmp_path, monkeypatch):
+    registry_path = tmp_path / "devices.json"
+    monkeypatch.setattr(broker_module, "settings", SimpleNamespace(device_token_file=registry_path, admin_token="admin-token-that-is-longer-than-thirty-two-characters", user_token_secret="portal-secret-that-is-longer-than-thirty-two-characters"))
+    monkeypatch.setattr(broker_module, "token_application_file", tmp_path / "applications.json")
+    broker_module.token_query_failures.clear()
+    client = TestClient(broker_module.app)
+    payload = {"employee_name": "张三", "employee_id": "00991"}
+    assert client.post("/v1/token/applications", json=payload).status_code == 200
+    assert client.post("/v1/token/applications/claim", json=payload).status_code == 401
+    assert client.get("/v1/admin/token-applications").status_code == 401
+    headers = {"Authorization": "Bearer admin-token-that-is-longer-than-thirty-two-characters"}
+    application = client.get("/v1/admin/token-applications", headers=headers).json()["applications"][0]
+    assert client.post(f"/v1/admin/token-applications/{application['id']}/approve", headers=headers).status_code == 200
+    claimed = client.post("/v1/token/applications/claim", json=payload)
+    assert claimed.status_code == 200
+    assert claimed.json()["device_token"].startswith("cwsdt_")
+    assert claimed.json()["device_token"] not in registry_path.read_text(encoding="utf-8")
+    assert client.post("/v1/token/applications/claim", json={**payload, "employee_name": "李四"}).status_code == 401
+    assert client.post(f"/v1/admin/token-applications/{application['id']}/approve", headers=headers).status_code == 409
+
+
+def test_model_usage_is_idempotent_and_charged_to_current_lease(tmp_path):
+    store = DeviceUsageStore(tmp_path / "usage.json")
+    employee = DeviceIdentity(token_id="employee", label="employee")
+    async def scenario():
+        await store.record_lease(employee, None, None, "account-a", time.time() + 3600)
+        first = SessionTokenUsage(session_id="session", model_usage=[{"model": "gpt-a", "total_tokens": 10}])
+        await store.record(employee, [first])
+        await store.record(employee, [first])
+        await store.record_lease(employee, None, None, "account-b", time.time() + 3600)
+        second = SessionTokenUsage(session_id="session", model_usage=[{"model": "gpt-a", "total_tokens": 25}])
+        await store.record(employee, [second])
+        return await store.account_model_summary()
+    result = asyncio.run(scenario())
+    assert result["account-a"]["gpt-a"]["total_tokens"] == 10
+    assert result["account-b"]["gpt-a"]["total_tokens"] == 15
+
+
+def test_public_account_usage_whitelists_official_fields(monkeypatch):
+    async def status(refresh_usage=False):
+        return [{"alias": "account-a", "email": "chatgpt010@example.com", "available": True, "plan_type": "pro", "usage": {"private_key": "secret", "rate_limit": {"primary_window": {"used_percent": 42, "reset_at": 2000000000, "hidden": "secret"}}}, "model_health": {"models": [{"name": "gpt-a", "available": True, "status": "available", "probe_successes": 4, "probe_attempts": 5, "error_message": "secret"}]}}]
+    async def summary():
+        return {"account-a": {"gpt-a": {"total_tokens": 25}}}
+    monkeypatch.setattr(broker_module, "broker", SimpleNamespace(account_status=status))
+    monkeypatch.setattr(broker_module, "usage_store", SimpleNamespace(account_model_summary=summary))
+    response = TestClient(broker_module.app).get("/v1/public/accounts")
+    assert response.status_code == 200
+    assert response.json()["accounts"][0]["username"] == "chatgpt010"
+    assert response.json()["accounts"][0]["models"][0]["token_usage"]["total_tokens"] == 25
+    assert "secret" not in response.text
+
+
+def test_existing_session_model_counters_start_from_upgrade_baseline(tmp_path):
+    store = DeviceUsageStore(tmp_path / "usage.json")
+    employee = DeviceIdentity(token_id="employee", label="employee")
+    async def scenario():
+        await store.record_lease(employee, None, None, "account-a", time.time() + 3600)
+        await store.record(employee, [SessionTokenUsage(session_id="old", total_tokens=100)])
+        await store.record(employee, [SessionTokenUsage(session_id="old", total_tokens=120, model_usage=[{"model": "gpt-a", "total_tokens": 120}])])
+        await store.record(employee, [SessionTokenUsage(session_id="old", total_tokens=135, model_usage=[{"model": "gpt-a", "total_tokens": 135}])])
+        return await store.account_model_summary()
+    assert asyncio.run(scenario())["account-a"]["gpt-a"]["total_tokens"] == 15
+
+
 def test_official_401_forces_oauth_refresh_and_retries_usage(tmp_path: Path):
     old_access = jwt({"exp": 2_000_000_000})
     new_access = jwt({"exp": 2_100_000_000})
@@ -1727,7 +1792,7 @@ def test_explicit_lease_account_alias_is_honored(monkeypatch):
 
 def test_client_account_route_requires_device_and_returns_choices(monkeypatch):
     async def choices():
-        return {"version": "0.1.8", "recommended_alias": "chatgpt024", "accounts": []}
+        return {"version": "0.1.9", "recommended_alias": "chatgpt024", "accounts": []}
     broker = SimpleNamespace(client_account_choices=choices)
     monkeypatch.setattr(broker_module, "broker", broker)
     monkeypatch.setattr(broker_module, "require_device", lambda: None)

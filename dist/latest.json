@@ -1,41 +1,41 @@
 {
   "assets": [
     {
-      "download_url": "/v1/client/releases/download/CWS-Codex-Linux-v0.1.8.tar.gz",
-      "name": "CWS-Codex-Linux-v0.1.8.tar.gz",
+      "download_url": "/v1/client/releases/download/CWS-Codex-Linux-v0.1.9.tar.gz",
+      "name": "CWS-Codex-Linux-v0.1.9.tar.gz",
       "platform": "linux",
-      "sha256": "afd2ee5f7b0ceda4e4ac8d11aaa54955d65350acfa427c5825e5509def3a2434",
-      "size": 15417
+      "sha256": "d7f0f2f9caafb537c8242f4e39f0adf0ba763f82827defb6626750dc1e626d3d",
+      "size": 15581
     },
     {
-      "download_url": "/v1/client/releases/download/CWS-Codex-Release-v0.1.8.zip",
-      "name": "CWS-Codex-Release-v0.1.8.zip",
+      "download_url": "/v1/client/releases/download/CWS-Codex-Release-v0.1.9.zip",
+      "name": "CWS-Codex-Release-v0.1.9.zip",
       "platform": "release-bundle",
-      "sha256": "9d312afcdaad27888868dd5964bef16e389ef12c4c2478ad780a49113aeda064",
-      "size": 418901
+      "sha256": "856a992b1f082ae1835c060791f0721e30e52922f7dce9a0ce1a23f597bb7e5d",
+      "size": 419155
     },
     {
-      "download_url": "/v1/client/releases/download/CWS-Codex-Server-v0.1.8.tar.gz",
-      "name": "CWS-Codex-Server-v0.1.8.tar.gz",
+      "download_url": "/v1/client/releases/download/CWS-Codex-Server-v0.1.9.tar.gz",
+      "name": "CWS-Codex-Server-v0.1.9.tar.gz",
       "platform": "server",
-      "sha256": "fed86f9c78b7066a5d5b47ae05d4bdd820f7045185ec7568ce1c7380f0f71558",
-      "size": 49637
+      "sha256": "00e0e82bcbbcb759ff10c892274acfad70bd5b6296023c175fa89c4d2598d5ee",
+      "size": 54175
     },
     {
-      "download_url": "/v1/client/releases/download/CWS-Codex-Setup-v0.1.8.exe",
-      "name": "CWS-Codex-Setup-v0.1.8.exe",
+      "download_url": "/v1/client/releases/download/CWS-Codex-Setup-v0.1.9.exe",
+      "name": "CWS-Codex-Setup-v0.1.9.exe",
       "platform": "windows-installer",
-      "sha256": "027969af04a68423561ad1265989acd9f7bad9ff7851e0fc546d45af73666e4d",
-      "size": 433188
+      "sha256": "d2db4fd2815b328329cb2805b340d1e59d6c79f00ba83ae4b6eb6df4fbd5a2fe",
+      "size": 433435
     },
     {
-      "download_url": "/v1/client/releases/download/CWS-Codex-Windows-v0.1.8.zip",
-      "name": "CWS-Codex-Windows-v0.1.8.zip",
+      "download_url": "/v1/client/releases/download/CWS-Codex-Windows-v0.1.9.zip",
+      "name": "CWS-Codex-Windows-v0.1.9.zip",
       "platform": "windows",
-      "sha256": "36e888c039d840688732efd436dd64738bad44139be6b571f73a58f1490f0918",
-      "size": 143939
+      "sha256": "90745affb20a6741ba9ca8f2bfe77f2125004f25c8871a6aa096d123776b02fc",
+      "size": 144184
     }
   ],
-  "published_at": "2026-11-13T23:47:06Z",
-  "release_version": "0.1.8"
+  "published_at": "2026-11-14T00:27:50Z",
+  "release_version": "0.1.9"
 }

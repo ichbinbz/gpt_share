@@ -59,6 +59,14 @@ CWS Codex Linux 服务端部署包
 
   http://codex.cws.internal:8765/token
 
+- 员工账号额度、逐模型 Token 用量与新员工申请入口：
+
+  http://codex.cws.internal:8765/employee
+
+  公网访问时须通过现有 HTTPS 反向代理转发 `/employee`、`/v1/public/accounts`、
+  `/v1/token/query`、`/v1/token/applications` 与 `/v1/token/applications/claim`。
+  Broker 本身继续只监听 127.0.0.1；不得通过明文 HTTP 传输设备令牌。
+
   管理员在额度页面输入“名字首字母.姓氏”的大写用户名（例如 YX.GUO）和工号增加用户。员工使用
   该用户名、工号作为初始密码查询自己的设备令牌。服务器仅保存密码派生哈希和设备令牌哈希，
   不保存明文。

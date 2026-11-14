@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the authenticated CWS Codex v0.1.8 server release manifest."""
+"""Build the authenticated CWS Codex v0.1.9 server release manifest."""
 
 from __future__ import annotations
 
@@ -12,13 +12,13 @@ from pathlib import Path
 from typing import Any, Sequence
 
 
-RELEASE_VERSION = "0.1.8"
+RELEASE_VERSION = "0.1.9"
 ASSET_PLATFORMS = {
-    "CWS-Codex-Setup-v0.1.8.exe": "windows-installer",
-    "CWS-Codex-Release-v0.1.8.zip": "release-bundle",
-    "CWS-Codex-Windows-v0.1.8.zip": "windows",
-    "CWS-Codex-Linux-v0.1.8.tar.gz": "linux",
-    "CWS-Codex-Server-v0.1.8.tar.gz": "server",
+    "CWS-Codex-Setup-v0.1.9.exe": "windows-installer",
+    "CWS-Codex-Release-v0.1.9.zip": "release-bundle",
+    "CWS-Codex-Windows-v0.1.9.zip": "windows",
+    "CWS-Codex-Linux-v0.1.9.tar.gz": "linux",
+    "CWS-Codex-Server-v0.1.9.tar.gz": "server",
 }
 ALLOWED_ASSET_NAMES = frozenset(ASSET_PLATFORMS)
 DOWNLOAD_PREFIX = "/v1/client/releases/download/"

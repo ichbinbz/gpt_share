@@ -76,7 +76,7 @@ class _BytesResponse:
         return result
 
 
-def _broker_manifest(version: str = "0.1.8", payload: bytes = b"linux archive"):
+def _broker_manifest(version: str = "0.1.9", payload: bytes = b"linux archive"):
     name = f"CWS-Codex-Linux-v{version}.tar.gz"
     return {
         "release_version": version,
@@ -93,7 +93,7 @@ def _broker_manifest(version: str = "0.1.8", payload: bytes = b"linux archive"):
     }
 
 
-def _github_release(version: str = "0.1.8", payload: bytes = b"linux archive"):
+def _github_release(version: str = "0.1.9", payload: bytes = b"linux archive"):
     name = f"CWS-Codex-Linux-v{version}.tar.gz"
     return {
         "tag_name": f"v{version}",
@@ -110,7 +110,7 @@ def _github_release(version: str = "0.1.8", payload: bytes = b"linux archive"):
     }
 
 
-def _linux_archive(version: str = "0.1.8") -> bytes:
+def _linux_archive(version: str = "0.1.9") -> bytes:
     output = io.BytesIO()
     root = f"CWS-Codex-Linux-v{version}"
     with tarfile.open(fileobj=output, mode="w:gz") as archive:
@@ -136,7 +136,7 @@ def test_linux_broker_release_candidate_uses_bearer_and_proxy(monkeypatch):
     )
     assert candidate["source"] == "Broker"
     assert candidate["download_url"] == (
-        "https://broker.example.test/v1/client/releases/download/CWS-Codex-Linux-v0.1.8.tar.gz"
+        "https://broker.example.test/v1/client/releases/download/CWS-Codex-Linux-v0.1.9.tar.gz"
     )
     assert observed == [
         (
@@ -144,7 +144,7 @@ def test_linux_broker_release_candidate_uses_bearer_and_proxy(monkeypatch):
             {
                 "Accept": "application/json",
                 "Authorization": "Bearer cwsdt_test-token-long-enough-123456",
-                "User-Agent": "CWS-Codex-Linux/0.1.8",
+                "User-Agent": "CWS-Codex-Linux/0.1.9",
             },
             "http://proxy:8080",
             30,
@@ -170,7 +170,7 @@ def test_linux_broker_release_success_skips_github(monkeypatch):
 
 def test_linux_account_choices_display_remaining_and_recommended(monkeypatch, capsys):
     monkeypatch.setattr(MODULE, "request_json", lambda *args, **kwargs: {
-        "version": "0.1.8",
+        "version": "0.1.9",
         "recommended_alias": "chatgpt024",
         "accounts": [
             {"alias": "chatgpt011", "available": True, "plan_type": "pro", "recommended": False,
@@ -240,10 +240,10 @@ def test_linux_update_fallback_reports_both_failures_without_leaking_device_toke
 @pytest.mark.parametrize(
     "download_url",
     [
-        "https://other.example.test/v1/client/releases/download/CWS-Codex-Linux-v0.1.8.tar.gz",
-        "https://broker.example.test:444/v1/client/releases/download/CWS-Codex-Linux-v0.1.8.tar.gz",
-        "https://broker.example.test:0/v1/client/releases/download/CWS-Codex-Linux-v0.1.8.tar.gz",
-        "https://user@broker.example.test/v1/client/releases/download/CWS-Codex-Linux-v0.1.8.tar.gz",
+        "https://other.example.test/v1/client/releases/download/CWS-Codex-Linux-v0.1.9.tar.gz",
+        "https://broker.example.test:444/v1/client/releases/download/CWS-Codex-Linux-v0.1.9.tar.gz",
+        "https://broker.example.test:0/v1/client/releases/download/CWS-Codex-Linux-v0.1.9.tar.gz",
+        "https://user@broker.example.test/v1/client/releases/download/CWS-Codex-Linux-v0.1.9.tar.gz",
     ],
 )
 def test_linux_broker_candidate_rejects_cross_origin_or_userinfo_download(monkeypatch, download_url):
@@ -261,7 +261,7 @@ def test_linux_broker_candidate_rejects_cross_origin_or_userinfo_download(monkey
 @pytest.mark.parametrize(
     "download_url",
     [
-        "https://@broker.example.test/v1/client/releases/download/CWS-Codex-Linux-v0.1.8.tar.gz",
+        "https://@broker.example.test/v1/client/releases/download/CWS-Codex-Linux-v0.1.9.tar.gz",
     ],
 )
 def test_linux_broker_candidate_rejects_empty_userinfo_download(monkeypatch, download_url):
@@ -280,12 +280,12 @@ def test_linux_update_hash_mismatch_skips_install_and_cleans_temp_directory(tmp_
     archive_payload = b"tampered archive"
     candidate = {
         "source": "Broker",
-        "version": "0.1.8",
-        "name": "CWS-Codex-Linux-v0.1.8.tar.gz",
+        "version": "0.1.9",
+        "name": "CWS-Codex-Linux-v0.1.9.tar.gz",
         "size": len(archive_payload),
         "sha256": "0" * 64,
-        "download_url": "https://broker.example.test/v1/client/releases/download/CWS-Codex-Linux-v0.1.8.tar.gz",
-        "headers": {"Authorization": "Bearer device-token", "User-Agent": "CWS-Codex-Linux/0.1.8"},
+        "download_url": "https://broker.example.test/v1/client/releases/download/CWS-Codex-Linux-v0.1.9.tar.gz",
+        "headers": {"Authorization": "Bearer device-token", "User-Agent": "CWS-Codex-Linux/0.1.9"},
     }
     created = []
     real_mkdtemp = tempfile.mkdtemp
@@ -313,12 +313,12 @@ def test_linux_broker_download_uses_proxy_bearer_and_blocks_redirects(monkeypatc
     archive_payload = _linux_archive()
     candidate = {
         "source": "Broker",
-        "version": "0.1.8",
-        "name": "CWS-Codex-Linux-v0.1.8.tar.gz",
+        "version": "0.1.9",
+        "name": "CWS-Codex-Linux-v0.1.9.tar.gz",
         "size": len(archive_payload),
         "sha256": hashlib.sha256(archive_payload).hexdigest(),
-        "download_url": "https://broker.example.test/v1/client/releases/download/CWS-Codex-Linux-v0.1.8.tar.gz",
-        "headers": {"Authorization": "Bearer device-token", "User-Agent": "CWS-Codex-Linux/0.1.8"},
+        "download_url": "https://broker.example.test/v1/client/releases/download/CWS-Codex-Linux-v0.1.9.tar.gz",
+        "headers": {"Authorization": "Bearer device-token", "User-Agent": "CWS-Codex-Linux/0.1.9"},
     }
     observed = []
 
@@ -367,7 +367,7 @@ def test_linux_github_candidate_rejects_empty_userinfo(monkeypatch):
         MODULE.github_release_candidate({})
 
 
-@pytest.mark.parametrize("tag_name", ["0.1.8", " v0.1.8", "v0.1.8 ", "vv0.1.8"])
+@pytest.mark.parametrize("tag_name", ["0.1.9", " v0.1.9", "v0.1.9 ", "vv0.1.9"])
 def test_linux_github_candidate_requires_exact_v_semver_tag(monkeypatch, tag_name):
     release = _github_release()
     release["tag_name"] = tag_name
@@ -393,7 +393,7 @@ def test_linux_confirmation_names_selected_update_source(monkeypatch):
         "run",
         lambda command, **_kwargs: observed.append(command) or type("Result", (), {"returncode": 1})(),
     )
-    assert not MODULE.confirm_graphical_update("0.1.8", "Broker")
+    assert not MODULE.confirm_graphical_update("0.1.9", "Broker")
     assert "Broker" in observed[0][-1]
     assert "GitHub" not in observed[0][-1]
 
@@ -423,11 +423,11 @@ def test_linux_update_stops_oversize_stream_before_extraction_and_cleans_temp(tm
     response = _OversizeResponse(b"oversized")
     candidate = {
         "source": "Broker",
-        "version": "0.1.8",
-        "name": "CWS-Codex-Linux-v0.1.8.tar.gz",
+        "version": "0.1.9",
+        "name": "CWS-Codex-Linux-v0.1.9.tar.gz",
         "size": expected_size,
         "sha256": "0" * 64,
-        "download_url": "https://broker.example.test/v1/client/releases/download/CWS-Codex-Linux-v0.1.8.tar.gz",
+        "download_url": "https://broker.example.test/v1/client/releases/download/CWS-Codex-Linux-v0.1.9.tar.gz",
         "headers": {"Authorization": "Bearer device-token"},
     }
     created = []
@@ -458,11 +458,11 @@ def test_linux_update_rejects_oversize_content_length_without_reading_or_extract
     response = _OversizeResponse(b"oversized", headers={"Content-Length": "9"})
     candidate = {
         "source": "Broker",
-        "version": "0.1.8",
-        "name": "CWS-Codex-Linux-v0.1.8.tar.gz",
+        "version": "0.1.9",
+        "name": "CWS-Codex-Linux-v0.1.9.tar.gz",
         "size": 3,
         "sha256": "0" * 64,
-        "download_url": "https://broker.example.test/v1/client/releases/download/CWS-Codex-Linux-v0.1.8.tar.gz",
+        "download_url": "https://broker.example.test/v1/client/releases/download/CWS-Codex-Linux-v0.1.9.tar.gz",
         "headers": {"Authorization": "Bearer device-token"},
     }
     monkeypatch.setattr(MODULE, "open_url", lambda *_args, **_kwargs: response)
@@ -543,6 +543,20 @@ def test_linux_usage_reader_uses_latest_counter_and_hashes_session_name(tmp_path
     assert records[0]["total_tokens"] == 25
     assert records[0]["input_tokens"] == 7
     assert len(records[0]["session_id"]) == 64
+
+
+def test_linux_usage_reader_attributes_token_deltas_to_active_model(tmp_path):
+    session = tmp_path / "sessions" / "model.jsonl"
+    session.parent.mkdir()
+    events = [
+        {"type": "turn_context", "payload": {"model": "gpt-a"}},
+        {"payload": {"type": "token_count", "info": {"total_token_usage": {"total_tokens": 10}}}},
+        {"type": "turn_context", "payload": {"model": "gpt-b"}},
+        {"payload": {"type": "token_count", "info": {"total_token_usage": {"total_tokens": 25}}}},
+    ]
+    session.write_text("\n".join(json.dumps(event) for event in events), encoding="utf-8")
+    record = MODULE.collect_session_usage(tmp_path / "sessions")[0]
+    assert [(item["model"], item["total_tokens"]) for item in record["model_usage"]] == [("gpt-a", 10), ("gpt-b", 15)]
 
 
 def test_linux_usage_reader_counts_user_text_locally_and_builds_daily_buckets(tmp_path):
