@@ -95,7 +95,7 @@ function Get-CwsAccountChoices {
     $Token = Get-CwsDeviceToken -TokenPath $TokenPath
     $Request = @{
         Uri                = $BrokerBase + "/v1/client/accounts"
-        Headers            = @{ Authorization = "Bearer $Token"; "User-Agent" = "CWS-Codex-Windows/0.1.11" }
+        Headers            = @{ Authorization = "Bearer $Token"; "User-Agent" = "CWS-Codex-Windows/0.1.12" }
         TimeoutSec         = 30
         MaximumRedirection = 0
         DisableKeepAlive   = $true
@@ -135,7 +135,7 @@ function Show-CwsAccountChooser {
     $Rows = @()
     foreach ($Account in $Accounts) {
         $windows = @($Account.windows)
-        $remaining = (($windows | ForEach-Object { "$($_.name)余量 $($_.remaining_percent)%" }) -join ", ")
+        $remaining = (($windows | ForEach-Object { $reset = if ($_.reset_after_seconds -ne $null) { (Get-Date).AddSeconds([double]$_.reset_after_seconds).ToString("MM-dd HH:mm") } else { "重置时间未知" }; "$($_.name)余量 $($_.remaining_percent)% · $reset 重置" }) -join ", ")
         if (-not $remaining) { $remaining = "余量未知" }
         $state = if ($Account.available -eq $true) { "可用" } else { "不可用：$($Account.status)" }
         $marker = if ($Account.recommended -eq $true -or [string]$Account.alias -eq [string]$Payload.recommended_alias) { "（推荐）" } else { "" }

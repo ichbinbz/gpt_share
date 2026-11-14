@@ -117,5 +117,5 @@ Set-CwsPrivateDirectoryAcl -Path $ClientHome
 
 if (-not $Quiet) {
     Write-Host "CWS Codex credential synchronized." -ForegroundColor Green
-    Write-Host "Account: $($Lease.account_alias); plan: $($Lease.plan_type)"
+    Write-Host "Account: $($Lease.account_username); plan: $($Lease.plan_type)"
 }

@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 
-VERSION = "0.1.11"
+VERSION = "0.1.12"
 GITHUB_REPOSITORY = "ichbinbz/gpt_share"
 INSTALL_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = INSTALL_DIR / "config.json"
@@ -291,6 +291,7 @@ def choose_account(payload: dict[str, Any], input_fn=input, portal_url: str = ""
         windows = item.get("windows") or []
         remaining = ", ".join(
             f"{window.get('name', 'window')}余量 {window.get('remaining_percent', '?')}%"
+            + (f" · {datetime.now().astimezone() + timedelta(seconds=int(window['reset_after_seconds'])):%m-%d %H:%M} 重置" if window.get('reset_after_seconds') is not None else " · 重置时间未知")
             for window in windows if isinstance(window, dict)
         ) or "余量未知"
         marker = "（推荐）" if item.get("recommended") or item.get("alias") == recommended else ""
@@ -662,6 +663,7 @@ def synchronize(config_path: Path = CONFIG_PATH, *, new_lease: bool = False, qui
         "lease_expires_at": lease.get("lease_expires_at"),
         "lease_started_at": lease_started_at,
         "account_alias": str(lease.get("account_alias") or ""),
+        "account_username": str(lease.get("account_username") or lease.get("account_alias") or ""),
         "access_token_expires_at": lease.get("access_token_expires_at"),
     }
     auth_path = codex_home / "auth.json"
@@ -670,7 +672,7 @@ def synchronize(config_path: Path = CONFIG_PATH, *, new_lease: bool = False, qui
     mark_managed_auth(auth_path, client_home)
     if not quiet:
         print("CWS Codex 凭据同步成功。")
-        print(f"账号：{lease.get('account_alias', '')}；套餐：{lease.get('plan_type', '')}")
+        print(f"账号：{lease.get('account_username') or lease.get('account_alias', '')}；套餐：{lease.get('plan_type', '')}")
     return lease
 
 

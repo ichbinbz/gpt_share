@@ -156,7 +156,7 @@ def main() -> int:
             },
         )
         print(f"Codex ChatGPT lease synchronized to {args.codex_home}")
-        print(f"Account alias: {lease.get('account_alias', 'unknown')}; plan: {lease.get('plan_type', 'unknown')}")
+        print(f"Account: {lease.get('account_username') or lease.get('account_alias', 'unknown')}; plan: {lease.get('plan_type', 'unknown')}")
         if not args.watch:
             print(f"Launch VS Code with CODEX_HOME={args.codex_home}")
             break

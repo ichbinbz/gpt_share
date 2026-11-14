@@ -100,7 +100,7 @@ USAGE_FIELDS = TOKEN_FIELDS + USER_INPUT_FIELDS
 USAGE_TIMEZONE = timezone(timedelta(hours=8), name="Asia/Shanghai")
 ACCOUNT_USAGE_BUCKET_SECONDS = 900
 ACCOUNT_USAGE_RETENTION_SECONDS = 8 * 86400
-BROKER_VERSION = "0.1.11"
+BROKER_VERSION = "0.1.12"
 USERNAME_PATTERN = re.compile(r"^[A-Z]{1,16}\.[A-Z]{1,32}$")
 EMPLOYEE_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 PASSWORD_HASH_ITERATIONS = 310_000
@@ -1692,6 +1692,7 @@ class TokenBroker:
             lease_expires = now + self.settings.lease_seconds
             leases[lease_id] = {
                 "account_alias": alias,
+                "account_username": account_usernames(self.accounts).get(alias, alias),
                 "device_token_id": identity.token_id,
                 "device_label": identity.label,
                 "client_device_hash": client_device_hash,
@@ -2020,11 +2021,11 @@ async def require_admin(authorization: str | None = Header(default=None)) -> Non
 
 
 RELEASE_MEDIA_TYPES = {
-    "CWS-Codex-Setup-v0.1.11.exe": "application/vnd.microsoft.portable-executable",
-    "CWS-Codex-Release-v0.1.11.zip": "application/zip",
-    "CWS-Codex-Windows-v0.1.11.zip": "application/zip",
-    "CWS-Codex-Linux-v0.1.11.tar.gz": "application/gzip",
-    "CWS-Codex-Server-v0.1.11.tar.gz": "application/gzip",
+    "CWS-Codex-Setup-v0.1.12.exe": "application/vnd.microsoft.portable-executable",
+    "CWS-Codex-Release-v0.1.12.zip": "application/zip",
+    "CWS-Codex-Windows-v0.1.12.zip": "application/zip",
+    "CWS-Codex-Linux-v0.1.12.tar.gz": "application/gzip",
+    "CWS-Codex-Server-v0.1.12.tar.gz": "application/gzip",
 }
 
 WINDOWS_FILE_ATTRIBUTE_DIRECTORY = 0x10
