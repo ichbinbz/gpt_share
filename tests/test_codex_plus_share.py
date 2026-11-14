@@ -1348,10 +1348,12 @@ def test_account_employee_window_ranks_five_and_ignores_duplicate_reports(tmp_pa
             usage = SessionTokenUsage(session_id=f"session-{index}", total_tokens=(index + 1) * 10)
             await store.record(employee, [usage])
             await store.record(employee, [usage])
-        return await store.account_employee_windows({"account-a": time.time() - 604800})
-    leaders = asyncio.run(scenario())["account-a"]
+        return await store.account_employee_windows({"account-a": time.time() - 604800}), await store.account_employee_tracking_started_at()
+    windows, observed_from = asyncio.run(scenario())
+    leaders = windows["account-a"]
     assert [item["total_tokens"] for item in leaders] == [60, 50, 40, 30, 20]
     assert leaders[0]["employee_name"] == "员工5"
+    assert observed_from is not None
 
 
 def test_employee_token_increments_follow_server_lease_when_account_changes(tmp_path):
@@ -1368,6 +1370,18 @@ def test_employee_token_increments_follow_server_lease_when_account_changes(tmp_
     assert usage["account-b"][0]["total_tokens"] == 15
 
 
+def test_account_employee_window_combines_multiple_devices_for_same_employee(tmp_path):
+    store = DeviceUsageStore(tmp_path / "usage.json")
+    async def scenario():
+        for index, tokens in enumerate((10, 20)):
+            employee = DeviceIdentity(token_id=f"device-{index}", label=f"设备{index}", employee_name="郑彬", employee_id="00123")
+            await store.record_lease(employee, None, None, "account-a", time.time() + 3600)
+            await store.record(employee, [SessionTokenUsage(session_id=f"session-{index}", total_tokens=tokens)])
+        return await store.account_employee_windows({"account-a": time.time() - 604800})
+    leaders = asyncio.run(scenario())["account-a"]
+    assert leaders == [{"employee_name": "郑彬", "employee_id": "00123", "total_tokens": 30}]
+
+
 def test_admin_accounts_uses_official_seven_day_window_for_employee_leaders(monkeypatch):
     now = time.time()
     async def status(refresh_usage=False):
@@ -1375,10 +1389,13 @@ def test_admin_accounts_uses_official_seven_day_window_for_employee_leaders(monk
     async def leaders(starts):
         assert abs(starts["account-a"] - (now + 3600 - 604800)) < 5
         return {"account-a": [{"employee_name": "张三", "total_tokens": 123}]}
+    async def tracked_since():
+        return now - 3600
     monkeypatch.setattr(broker_module, "broker", SimpleNamespace(account_status=status))
-    monkeypatch.setattr(broker_module, "usage_store", SimpleNamespace(account_employee_windows=leaders))
+    monkeypatch.setattr(broker_module, "usage_store", SimpleNamespace(account_employee_windows=leaders, account_employee_tracking_started_at=tracked_since))
     result = asyncio.run(broker_module.list_accounts())
     assert result["accounts"][0]["top_employees"][0]["total_tokens"] == 123
+    assert result["accounts"][0]["employee_window"]["observed_from"] == now - 3600
 
 
 def test_official_401_forces_oauth_refresh_and_retries_usage(tmp_path: Path):
@@ -2033,6 +2050,7 @@ def test_quota_dashboard_renders_sanitized_model_health_through_safe_dom_nodes()
     assert "renderModelHealth" in dashboard
     assert "model-tags" in dashboard
     assert "tag.title=" in dashboard
+    assert "millionTokens" in dashboard
     for label in ("模型可用", "容量超限", "额度耗尽", "鉴权失败", "不支持", "探测异常", "探测未知"):
         assert label in dashboard
     assert "innerHTML" not in dashboard

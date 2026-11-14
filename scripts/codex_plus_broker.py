@@ -683,7 +683,7 @@ class DeviceUsageStore:
         devices = state.get("devices", {})
         results: dict[str, list[dict[str, Any]]] = {}
         for alias, start in starts.items():
-            employees = []
+            employees_by_id: dict[str, dict[str, Any]] = {}
             account_usage = usage.get(alias, {}) if isinstance(usage, dict) else {}
             if not isinstance(account_usage, dict):
                 continue
@@ -694,13 +694,28 @@ class DeviceUsageStore:
                 if not total:
                     continue
                 device = devices.get(token_id, {}) if isinstance(devices, dict) else {}
-                employees.append({
+                employee_id = device.get("employee_id")
+                key = str(employee_id) if employee_id else str(token_id)
+                employee = employees_by_id.setdefault(key, {
                     "employee_name": device.get("employee_name") or device.get("device_label") or token_id,
-                    "employee_id": device.get("employee_id"),
-                    "total_tokens": total,
+                    "employee_id": employee_id,
+                    "total_tokens": 0,
                 })
-            results[alias] = sorted(employees, key=lambda item: item["total_tokens"], reverse=True)[:5]
+                employee["total_tokens"] += total
+            results[alias] = sorted(employees_by_id.values(), key=lambda item: item["total_tokens"], reverse=True)[:5]
         return results
+
+    async def account_employee_tracking_started_at(self) -> float | None:
+        async with self.lock:
+            state = self._load()
+        usage = state.get("account_employee_usage", {})
+        buckets = [
+            float(bucket)
+            for account in usage.values() if isinstance(account, dict)
+            for employee in account.values() if isinstance(employee, dict)
+            for bucket in employee
+        ] if isinstance(usage, dict) else []
+        return min(buckets) if buckets else None
 
     async def summary(
         self, registered_devices: dict[str, dict[str, Any]] | set[str]
@@ -2510,8 +2525,10 @@ async def list_accounts(refresh: bool = False) -> dict[str, Any]:
         starts[str(account.get("alias"))] = start
         account["employee_window"] = {"started_at": start, "ends_at": reset_at if reset_at > now else now, "estimated_from_reports": True}
     leaders = await usage_store.account_employee_windows(starts)
+    tracking_started_at = await usage_store.account_employee_tracking_started_at()
     for account in accounts:
         account["top_employees"] = leaders.get(str(account.get("alias")), [])
+        account["employee_window"]["observed_from"] = max(starts[str(account.get("alias"))], tracking_started_at) if tracking_started_at is not None else None
     return {
         "version": BROKER_VERSION,
         "accounts": accounts,

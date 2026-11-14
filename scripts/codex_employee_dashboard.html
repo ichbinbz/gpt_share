@@ -3,16 +3,56 @@
 <style>
 :root{color-scheme:dark;--bg:#07111f;--panel:#0e1c2f;--line:#20344e;--text:#edf5ff;--muted:#91a4bc;--cyan:#38d7ff;--green:#43df9b;--red:#ff697d}
 *{box-sizing:border-box}body{margin:0;min-height:100vh;font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--text);background:radial-gradient(circle at 10% 0%,#123152 0,transparent 34%),radial-gradient(circle at 90% 10%,#123c47 0,transparent 28%),var(--bg)}main{width:min(1200px,calc(100% - 32px));margin:auto;padding:32px 0 50px}h1{font-size:clamp(26px,4vw,38px);letter-spacing:-.04em;margin:0}h2{font-size:21px;margin:0}p,.muted{color:var(--muted)}section{border:1px solid var(--line);border-radius:16px;padding:18px;margin:18px 0;background:linear-gradient(145deg,rgba(19,39,63,.96),rgba(10,24,42,.96));box-shadow:0 16px 50px rgba(0,0,0,.2)}.card-head{display:flex;align-items:center;justify-content:space-between;gap:12px}button,input{font:inherit}button{border:1px solid var(--line);border-radius:10px;color:var(--text);background:#14263d;padding:9px 14px;cursor:pointer}button:hover{border-color:var(--cyan)}button:disabled{opacity:.65}input{min-width:0;border:1px solid var(--line);border-radius:10px;padding:10px 12px;color:var(--text);background:#091729;outline:none}input:focus{border-color:var(--cyan)}form{display:flex;flex-wrap:wrap;gap:10px}.error{color:#ffd6dc}.token{display:block;overflow-wrap:anywhere;border:1px solid var(--line);border-radius:10px;background:#091729;padding:12px}
-#accounts{display:grid;gap:7px}.account-card{display:grid;grid-template-columns:108px 150px 76px minmax(0,1fr);align-items:center;gap:8px;min-width:0;border:1px solid var(--line);border-radius:11px;padding:8px 10px;background:rgba(7,17,31,.35)}.account-card strong{font-size:14px}.quota,.total{color:var(--muted);font-size:12px;white-space:nowrap}.models{display:flex;align-items:center;gap:4px;white-space:nowrap;min-width:0}.model-tag,.state{display:inline-block;border-radius:999px;padding:3px 6px;font-size:11px;white-space:nowrap}.ok{color:var(--green);background:rgba(67,223,155,.12)}.bad{color:var(--red);background:rgba(255,105,125,.12)}.unknown{color:var(--muted);background:#1a3150}@media(max-width:1100px){.account-card{grid-template-columns:108px 140px 70px minmax(0,1fr);gap:5px}.model-tag{padding:3px 4px;font-size:10px}}@media(max-width:850px){.account-card{grid-template-columns:108px 140px 1fr}.total{display:none}.models{overflow-x:auto;scrollbar-width:thin}}@media(max-width:600px){main{width:calc(100% - 20px);padding-top:20px}.account-card{grid-template-columns:100px 1fr}.models{grid-column:1/-1}.card-head{align-items:flex-start}}
+#accounts{display:grid;gap:7px}.account-card{display:grid;grid-template-columns:108px 225px 76px minmax(0,1fr);align-items:center;gap:8px;min-width:0;border:1px solid var(--line);border-radius:11px;padding:8px 10px;background:rgba(7,17,31,.35)}.account-card strong{font-size:14px}.quota,.total{color:var(--muted);font-size:12px;white-space:nowrap}.models{display:flex;align-items:center;gap:4px;white-space:nowrap;min-width:0}.model-tag,.state{display:inline-block;border-radius:999px;padding:3px 6px;font-size:11px;white-space:nowrap}.ok{color:var(--green);background:rgba(67,223,155,.12)}.bad{color:var(--red);background:rgba(255,105,125,.12)}.unknown{color:var(--muted);background:#1a3150}@media(max-width:1100px){.account-card{grid-template-columns:108px 210px 70px minmax(0,1fr);gap:5px}.model-tag{padding:3px 4px;font-size:10px}}@media(max-width:850px){.account-card{grid-template-columns:108px 210px 1fr}.total{display:none}.models{overflow-x:auto;scrollbar-width:thin}}@media(max-width:600px){main{width:calc(100% - 20px);padding-top:20px}.account-card{grid-template-columns:100px 1fr}.models{grid-column:1/-1}.card-head{align-items:flex-start}}
 </style></head><body><main>
-<h1>员工账号与令牌查询</h1><p>账号额度和模型状态无需令牌即可查看。逐模型 Token 用量从升级后的客户端上报开始累计。</p>
+<h1>员工账号与令牌查询</h1><p>账号额度和模型状态无需令牌即可查看。模型用量单位为百万 Token，从升级后的客户端上报开始累计。</p>
 <section><div class="card-head"><h2>登录账号、额度与模型用量</h2><button id="refresh" type="button">刷新</button></div><p id="updated" class="muted">正在加载…</p><div id="accounts"></div></section>
 <section><h2>已有员工查询令牌</h2><p>输入用户名（如 YX.GUO）和工号。令牌只显示在当前页面，请妥善保存。</p><form id="query"><input name="username" placeholder="用户名" required autocomplete="username"><input name="password" type="password" placeholder="工号" required autocomplete="off"><button>查询令牌</button></form><p id="query-result"></p></section>
 <section><h2>新员工申请令牌</h2><p>填写姓名和工号。管理员审批后，可在下方领取令牌。</p><form id="apply"><input name="employee_name" placeholder="姓名" required maxlength="64"><input name="employee_id" placeholder="工号" required maxlength="64"><button>提交申请</button></form><p id="apply-result"></p></section>
 <section><h2>领取已批准令牌</h2><form id="claim"><input name="employee_name" placeholder="申请时填写的姓名" required maxlength="64"><input name="employee_id" placeholder="工号" required maxlength="64"><button>领取令牌</button></form><p id="claim-result"></p></section>
 </main><script>
-const el=id=>document.getElementById(id);const add=(parent,tag,value,cls)=>{const child=document.createElement(tag);child.textContent=value??'—';if(cls)child.className=cls;parent.append(child);return child};const number=value=>Number(value||0).toLocaleString('zh-CN');const brief=value=>new Intl.NumberFormat('zh-CN',{notation:'compact',maximumFractionDigits:1}).format(Number(value||0))+'T';
-async function load(){el('refresh').disabled=true;try{const response=await fetch('/v1/public/accounts',{cache:'no-store'});if(!response.ok)throw Error(`HTTP ${response.status}`);const data=await response.json();el('updated').textContent=`更新：${new Date(data.fetched_at*1000).toLocaleString()}`;const root=el('accounts');root.replaceChildren();for(const account of data.accounts||[]){const card=add(root,'article','','account-card');const label=add(card,'strong',account.username||'账号');label.style.color=account.available?'var(--text)':'var(--red)';label.title=account.available?'账号可用':'账号不可用';const quotas=[];const quotaDetails=[];for(const [name,window] of [['7天',account.rate_limit?.primary_window],['次',account.rate_limit?.secondary_window]]){if(!window)continue;const used=window.used_percent;const remaining=used==null?'—':`${Math.max(0,100-Number(used)).toFixed(0)}%`;quotas.push(`${name}余 ${remaining}`);if(window.reset_at)quotaDetails.push(`${name}额度重置：${new Date(window.reset_at*1000).toLocaleString()}`)}const quota=add(card,'span',quotas.join(' · ')||'额度未知','quota');quota.title=quotaDetails.join('；');const models=[...(account.models||[]),...(account.unlisted_model_usage||[])];const total=models.reduce((sum,model)=>sum+Number(model.token_usage?.total_tokens||0),0);add(card,'span',`总 ${number(total)} T`,'total');const tags=add(card,'div','','models');if(!models.length)add(tags,'span','暂无模型数据','muted');for(const model of models){const cls=model.available===true?'ok':model.available===false?'bad':'unknown';const name=model.name||'未知模型';const shortName=name.startsWith('gpt-')?name.slice(4):name;const tag=add(tags,'span',`${shortName} ${brief(model.token_usage?.total_tokens)}`,`model-tag ${cls}`);tag.title=`${name}：${model.available===true?'可用':model.available===false?'不可用':'未探测'}；总 ${number(model.token_usage?.total_tokens)} Token（输入 ${number(model.token_usage?.input_tokens)}，输出 ${number(model.token_usage?.output_tokens)}）${model.probe_attempts?`；探测 ${model.probe_successes||0}/${model.probe_attempts}`:''}`}}}catch(error){el('updated').textContent=`加载失败：${error.message}`}finally{el('refresh').disabled=false}}
+const el=id=>document.getElementById(id);const add=(parent,tag,value,cls)=>{const child=document.createElement(tag);child.textContent=value??'—';if(cls)child.className=cls;parent.append(child);return child};const number=value=>Number(value||0).toLocaleString('zh-CN');const million=value=>{const amount=Number(value||0);return amount>0&&amount<1000?'<0.001':(amount/1e6).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:3})};
+async function load(){
+  el('refresh').disabled=true;
+  try{
+    const response=await fetch('/v1/public/accounts',{cache:'no-store'});
+    if(!response.ok)throw Error(`HTTP ${response.status}`);
+    const data=await response.json();
+    el('updated').textContent=`更新：${new Date(data.fetched_at*1000).toLocaleString()}`;
+    const root=el('accounts');root.replaceChildren();
+    for(const account of data.accounts||[]){
+      const card=add(root,'article','','account-card');
+      const label=add(card,'strong',account.username||'账号');
+      label.style.color=account.available?'var(--text)':'var(--red)';
+      label.title=account.available?'账号可用':'账号不可用';
+      const quotas=[];
+      const quotaDetails=[];
+      for(const [name,window] of [['7天',account.rate_limit?.primary_window],['次',account.rate_limit?.secondary_window]]){
+        if(!window)continue;
+        const used=window.used_percent;
+        const remaining=used==null?'—':`${Math.max(0,100-Number(used)).toFixed(0)}%`;
+        const reset=window.reset_at?new Date(window.reset_at*1000):null;
+        const shortReset=reset?reset.toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}):null;
+        quotas.push(`${name}余 ${remaining}${shortReset?` · ${shortReset}重置`:''}`);
+        if(reset)quotaDetails.push(`${name}额度重置：${reset.toLocaleString()}`);
+      }
+      const quota=add(card,'span',quotas.join(' · ')||'额度未知','quota');quota.title=quotaDetails.join('；');
+      const models=[...(account.models||[]),...(account.unlisted_model_usage||[])];
+      const total=models.reduce((sum,model)=>sum+Number(model.token_usage?.total_tokens||0),0);
+      add(card,'span',`总 ${million(total)}M`,'total');
+      const tags=add(card,'div','','models');
+      if(!models.length)add(tags,'span','暂无模型数据','muted');
+      for(const model of models){
+        const cls=model.available===true?'ok':model.available===false?'bad':'unknown';
+        const name=model.name||'未知模型';
+        const shortName=name.startsWith('gpt-')?name.slice(4):name;
+        const tag=add(tags,'span',`${shortName} ${million(model.token_usage?.total_tokens)}M`,`model-tag ${cls}`);
+        tag.title=`${name}：${model.available===true?'可用':model.available===false?'不可用':'未探测'}；总 ${number(model.token_usage?.total_tokens)} Token（输入 ${number(model.token_usage?.input_tokens)}，输出 ${number(model.token_usage?.output_tokens)}）${model.probe_attempts?`；探测 ${model.probe_successes||0}/${model.probe_attempts}`:''}`;
+      }
+    }
+  }catch(error){el('updated').textContent=`加载失败：${error.message}`}
+  finally{el('refresh').disabled=false}
+}
 async function send(form,url,target){const output=el(target);output.textContent='处理中…';output.className='muted';const button=form.querySelector('button');button.disabled=true;try{const body=Object.fromEntries(new FormData(form));const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),cache:'no-store'});const data=await response.json();if(!response.ok)throw Error(data.detail||`HTTP ${response.status}`);output.textContent='';if(data.device_token){add(output,'span',`用户名：${data.username} · 令牌：${data.device_token}`,'token')}else output.textContent='申请已提交，等待管理员审批。'}catch(error){output.textContent=error.message;output.className='error'}finally{button.disabled=false}}
 el('query').addEventListener('submit',event=>{event.preventDefault();send(event.currentTarget,'/v1/token/query','query-result')});el('apply').addEventListener('submit',event=>{event.preventDefault();send(event.currentTarget,'/v1/token/applications','apply-result')});el('claim').addEventListener('submit',event=>{event.preventDefault();send(event.currentTarget,'/v1/token/applications/claim','claim-result')});el('refresh').addEventListener('click',load);load();setInterval(load,60000);
 </script></body></html>

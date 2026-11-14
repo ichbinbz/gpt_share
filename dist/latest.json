@@ -18,8 +18,8 @@
       "download_url": "/v1/client/releases/download/CWS-Codex-Server-v0.1.10.tar.gz",
       "name": "CWS-Codex-Server-v0.1.10.tar.gz",
       "platform": "server",
-      "sha256": "92260abb9aa2759f21a7588f986c7c66c9a01cfedb4cfab3e6e9b606388c8195",
-      "size": 56103
+      "sha256": "12a24c00d492e62642e4266ad8e584dd303cb505efc47057f831677aca82c5f6",
+      "size": 56702
     },
     {
       "download_url": "/v1/client/releases/download/CWS-Codex-Setup-v0.1.10.exe",
@@ -36,6 +36,6 @@
       "size": 144461
     }
   ],
-  "published_at": "2026-11-14T00:57:58Z",
+  "published_at": "2026-11-14T01:24:53Z",
   "release_version": "0.1.10"
 }
