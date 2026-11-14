@@ -64,7 +64,7 @@ def probe_account(tmp_path: Path, payload: dict | None = None) -> AccountRecord:
 
 def client_release_manifest(asset_name: str, payload: bytes) -> dict:
     return {
-        "release_version": "0.1.12",
+        "release_version": "0.1.13",
         "published_at": "2026-09-18T00:00:00Z",
         "assets": [
             {
@@ -79,7 +79,7 @@ def client_release_manifest(asset_name: str, payload: bytes) -> dict:
 
 
 def configure_client_release(tmp_path: Path, monkeypatch, payload: bytes = b"installer"):
-    asset_name = "CWS-Codex-Setup-v0.1.12.exe"
+    asset_name = "CWS-Codex-Setup-v0.1.13.exe"
     (tmp_path / asset_name).write_bytes(payload)
     manifest = client_release_manifest(asset_name, payload)
     (tmp_path / "latest.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -149,7 +149,7 @@ def test_client_release_latest_returns_revalidated_manifest(tmp_path: Path, monk
     "filename",
     [
         "auth.json",
-        "CWS-Codex-Release-v0.1.12.zip",
+        "CWS-Codex-Release-v0.1.13.zip",
         "..%5Cauth.json",
         "%2e%2e%2fauth.json",
     ],
@@ -230,7 +230,7 @@ def test_client_release_download_returns_validated_bytes_and_fixed_headers(
     assert response.headers["content-type"] == "application/vnd.microsoft.portable-executable"
     assert response.headers["content-length"] == "9"
     assert response.headers["content-disposition"] == (
-        'attachment; filename="CWS-Codex-Setup-v0.1.12.exe"'
+        'attachment; filename="CWS-Codex-Setup-v0.1.13.exe"'
     )
     assert response.headers["cache-control"] == "private"
 
@@ -1851,7 +1851,7 @@ def test_explicit_lease_account_alias_is_honored(monkeypatch):
 
 def test_client_account_route_requires_device_and_returns_choices(monkeypatch):
     async def choices():
-        return {"version": "0.1.12", "recommended_alias": "chatgpt024", "accounts": []}
+        return {"version": "0.1.13", "recommended_alias": "chatgpt024", "accounts": []}
     broker = SimpleNamespace(client_account_choices=choices)
     monkeypatch.setattr(broker_module, "broker", broker)
     monkeypatch.setattr(broker_module, "require_device", lambda: None)

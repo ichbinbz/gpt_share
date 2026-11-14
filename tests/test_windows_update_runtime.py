@@ -36,11 +36,11 @@ function Invoke-RestMethod {
     if (-not $DisableKeepAlive) { throw "Broker update connection must close before credential sync" }
     if ($Uri -notlike "*/v1/client/releases/latest") { throw "Unexpected GitHub fallback" }
     [pscustomobject]@{
-        release_version="0.1.12"; published_at="2026-09-18T00:00:00Z";
+        release_version="0.1.13"; published_at="2026-09-18T00:00:00Z";
         assets=@([pscustomobject]@{
-            platform="windows-installer"; name="CWS-Codex-Setup-v0.1.12.exe"; size=9;
+            platform="windows-installer"; name="CWS-Codex-Setup-v0.1.13.exe"; size=9;
             sha256="9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c";
-            download_url="/v1/client/releases/download/CWS-Codex-Setup-v0.1.12.exe"
+            download_url="/v1/client/releases/download/CWS-Codex-Setup-v0.1.13.exe"
         })
     }
 }
@@ -154,7 +154,7 @@ function Invoke-RestMethod {
             config_path.write_text(
                 json.dumps(
                     {
-                        "client_version": "0.1.12",
+                        "client_version": "0.1.13",
                         "client_home": str(fixture / "client-home"),
                         "codex_home": str(fixture / "codex-home"),
                         "vscode_path": str(fake_vscode),
@@ -184,7 +184,7 @@ function Invoke-RestMethod {
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("CWS Codex 员工端 v0.1.12", result.stdout)
+            self.assertIn("CWS Codex 员工端 v0.1.13", result.stdout)
             self.assertEqual(
                 [name for name, marker in markers.items() if marker.exists()],
                 [],
@@ -202,14 +202,14 @@ function Invoke-RestMethod {
             $BrokerFetch = {
                 param($Request)
                 [pscustomobject]@{
-                    release_version = "0.1.12"
+                    release_version = "0.1.13"
                     published_at = "2026-09-18T00:00:00Z"
                     assets = @([pscustomobject]@{
                         platform = "windows-installer"
-                        name = "CWS-Codex-Setup-v0.1.12.exe"
+                        name = "CWS-Codex-Setup-v0.1.13.exe"
                         size = 9
                         sha256 = "9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
-                        download_url = "/v1/client/releases/download/CWS-Codex-Setup-v0.1.12.exe"
+                        download_url = "/v1/client/releases/download/CWS-Codex-Setup-v0.1.13.exe"
                     })
                 }
             }
@@ -231,11 +231,11 @@ function Invoke-RestMethod {
             candidate,
             {
                 "source": "Broker",
-                "version": "0.1.12",
-                "name": "CWS-Codex-Setup-v0.1.12.exe",
+                "version": "0.1.13",
+                "name": "CWS-Codex-Setup-v0.1.13.exe",
                 "size": 9,
                 "sha256": "9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c",
-                "download_url": "https://broker.example.test/v1/client/releases/download/CWS-Codex-Setup-v0.1.12.exe",
+                "download_url": "https://broker.example.test/v1/client/releases/download/CWS-Codex-Setup-v0.1.13.exe",
                 "headers": {
                     "Authorization": "Bearer device-secret",
                     "User-Agent": "CWS-Codex-Windows/0.1.6",
@@ -257,13 +257,13 @@ function Invoke-RestMethod {
                 param($Request)
                 $script:GithubCalls++
                 [pscustomobject]@{
-                    tag_name = "v0.1.12"
-                    name = "CWS Codex v0.1.12"
+                    tag_name = "v0.1.13"
+                    name = "CWS Codex v0.1.13"
                     assets = @([pscustomobject]@{
-                        name = "CWS-Codex-Setup-v0.1.12.exe"
+                        name = "CWS-Codex-Setup-v0.1.13.exe"
                         size = 9
                         digest = "sha256:9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
-                        browser_download_url = "https://github.com/ichbinbz/gpt_share/releases/download/v0.1.12/CWS-Codex-Setup-v0.1.12.exe"
+                        browser_download_url = "https://github.com/ichbinbz/gpt_share/releases/download/v0.1.13/CWS-Codex-Setup-v0.1.13.exe"
                     })
                 }
             }
@@ -285,7 +285,7 @@ function Invoke-RestMethod {
         payload = json.loads(result.stdout.strip())
         self.assertEqual(payload["github_calls"], 1)
         self.assertEqual(payload["candidate"]["source"], "GitHub")
-        self.assertEqual(payload["candidate"]["version"], "0.1.12")
+        self.assertEqual(payload["candidate"]["version"], "0.1.13")
         self.assertNotIn("Authorization", payload["candidate"]["headers"])
         self.assertEqual(
             payload["candidate"]["headers"],
@@ -337,13 +337,13 @@ function Invoke-RestMethod {
                 param($Request)
                 $script:GithubCalls++
                 [pscustomobject]@{
-                    tag_name = "v0.1.12"
-                    name = "CWS Codex v0.1.12"
+                    tag_name = "v0.1.13"
+                    name = "CWS Codex v0.1.13"
                     assets = @([pscustomobject]@{
-                        name = "CWS-Codex-Setup-v0.1.12.exe"
+                        name = "CWS-Codex-Setup-v0.1.13.exe"
                         size = 9
                         digest = "sha256:9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
-                        browser_download_url = "https://github.com/ichbinbz/gpt_share/releases/download/v0.1.12/CWS-Codex-Setup-v0.1.12.exe"
+                        browser_download_url = "https://github.com/ichbinbz/gpt_share/releases/download/v0.1.13/CWS-Codex-Setup-v0.1.13.exe"
                     })
                 }
             }
@@ -353,20 +353,20 @@ function Invoke-RestMethod {
                 [pscustomobject]@{ field = "size"; value = "9" },
                 [pscustomobject]@{ field = "size"; value = -1 },
                 [pscustomobject]@{ field = "sha256"; value = "9C0D294C05FC1D88D698034609BB81C0C69196327594E4C69D2915C80FD9850C" },
-                [pscustomobject]@{ field = "download_url"; value = "https://evil.example.test/CWS-Codex-Setup-v0.1.12.exe" }
+                [pscustomobject]@{ field = "download_url"; value = "https://evil.example.test/CWS-Codex-Setup-v0.1.13.exe" }
             )
             $script:GithubCalls = 0
             $Sources = @()
             foreach ($Case in $Cases) {
                 $Release = [pscustomobject]@{
-                    release_version = "0.1.12"
+                    release_version = "0.1.13"
                     published_at = "2026-09-18T00:00:00Z"
                     assets = @([pscustomobject]@{
                         platform = "windows-installer"
-                        name = "CWS-Codex-Setup-v0.1.12.exe"
+                        name = "CWS-Codex-Setup-v0.1.13.exe"
                         size = 9
                         sha256 = "9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
-                        download_url = "/v1/client/releases/download/CWS-Codex-Setup-v0.1.12.exe"
+                        download_url = "/v1/client/releases/download/CWS-Codex-Setup-v0.1.13.exe"
                     })
                 }
                 if ($Case.field -eq "version") { $Release.release_version = $Case.value }
@@ -400,11 +400,11 @@ function Invoke-RestMethod {
                 rf"""
                 $Candidate = [pscustomobject]@{{
                     source = "Broker"
-                    version = "0.1.12"
-                    name = "CWS-Codex-Setup-v0.1.12.exe"
+                    version = "0.1.13"
+                    name = "CWS-Codex-Setup-v0.1.13.exe"
                     size = 10
                     sha256 = "9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
-                    download_url = "https://broker.example.test/v1/client/releases/download/CWS-Codex-Setup-v0.1.12.exe"
+                    download_url = "https://broker.example.test/v1/client/releases/download/CWS-Codex-Setup-v0.1.13.exe"
                     headers = @{{ Authorization = "Bearer device-secret" }}
                 }}
                 $script:InstallerStarted = $false
@@ -446,11 +446,11 @@ function Invoke-RestMethod {
                 rf"""
                 $Candidate = [pscustomobject]@{{
                     source = "GitHub"
-                    version = "0.1.12"
-                    name = "CWS-Codex-Setup-v0.1.12.exe"
+                    version = "0.1.13"
+                    name = "CWS-Codex-Setup-v0.1.13.exe"
                     size = 9
                     sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
-                    download_url = "https://github.com/ichbinbz/gpt_share/releases/download/v0.1.12/CWS-Codex-Setup-v0.1.12.exe"
+                    download_url = "https://github.com/ichbinbz/gpt_share/releases/download/v0.1.13/CWS-Codex-Setup-v0.1.13.exe"
                     headers = @{{ "User-Agent" = "CWS-Codex-Windows/0.1.6" }}
                 }}
                 $script:InstallerStarted = $false
@@ -498,14 +498,14 @@ function Invoke-RestMethod {
                 param($Request)
                 $script:ObservedRequest = $Request
                 [pscustomobject]@{
-                    release_version = "0.1.12"
+                    release_version = "0.1.13"
                     published_at = "2026-09-18T00:00:00Z"
                     assets = @([pscustomobject]@{
                         platform = "windows-installer"
-                        name = "CWS-Codex-Setup-v0.1.12.exe"
+                        name = "CWS-Codex-Setup-v0.1.13.exe"
                         size = 9
                         sha256 = "9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
-                        download_url = "/v1/client/releases/download/CWS-Codex-Setup-v0.1.12.exe"
+                        download_url = "/v1/client/releases/download/CWS-Codex-Setup-v0.1.13.exe"
                     })
                 }
             }
@@ -555,13 +555,13 @@ function Invoke-RestMethod {
                 param($Request)
                 $script:ObservedRequest = $Request
                 [pscustomobject]@{
-                    tag_name = "v0.1.12"
-                    name = "CWS Codex v0.1.12"
+                    tag_name = "v0.1.13"
+                    name = "CWS Codex v0.1.13"
                     assets = @([pscustomobject]@{
-                        name = "CWS-Codex-Setup-v0.1.12.exe"
+                        name = "CWS-Codex-Setup-v0.1.13.exe"
                         size = 9
                         digest = "sha256:9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
-                        browser_download_url = "https://github.com/ichbinbz/gpt_share/releases/download/v0.1.12/CWS-Codex-Setup-v0.1.12.exe"
+                        browser_download_url = "https://github.com/ichbinbz/gpt_share/releases/download/v0.1.13/CWS-Codex-Setup-v0.1.13.exe"
                     })
                 }
             }
@@ -599,11 +599,11 @@ function Invoke-RestMethod {
                 rf"""
                 $Candidate = [pscustomobject]@{{
                     source = "Broker"
-                    version = "0.1.12"
-                    name = "CWS-Codex-Setup-v0.1.12.exe"
+                    version = "0.1.13"
+                    name = "CWS-Codex-Setup-v0.1.13.exe"
                     size = 9
                     sha256 = "9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
-                    download_url = "https://broker.example.test/v1/client/releases/download/CWS-Codex-Setup-v0.1.12.exe"
+                    download_url = "https://broker.example.test/v1/client/releases/download/CWS-Codex-Setup-v0.1.13.exe"
                     headers = @{{
                         Authorization = "Bearer device-secret"
                         "User-Agent" = "CWS-Codex-Windows/0.1.6"
@@ -655,11 +655,11 @@ function Invoke-RestMethod {
                 rf"""
                 $Candidate = [pscustomobject]@{{
                     source = "Broker"
-                    version = "0.1.12"
-                    name = "CWS-Codex-Setup-v0.1.12.exe"
+                    version = "0.1.13"
+                    name = "CWS-Codex-Setup-v0.1.13.exe"
                     size = 9
                     sha256 = "9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
-                    download_url = "https://broker.example.test/v1/client/releases/download/CWS-Codex-Setup-v0.1.12.exe"
+                    download_url = "https://broker.example.test/v1/client/releases/download/CWS-Codex-Setup-v0.1.13.exe"
                     headers = @{{ Authorization = "Bearer device-secret" }}
                 }}
                 $DownloadFetch = {{
@@ -696,11 +696,11 @@ function Invoke-RestMethod {
                 rf"""
                 $Candidate = [pscustomobject]@{{
                     source = "GitHub"
-                    version = "0.1.12"
-                    name = "CWS-Codex-Setup-v0.1.12.exe"
+                    version = "0.1.13"
+                    name = "CWS-Codex-Setup-v0.1.13.exe"
                     size = 9
                     sha256 = "9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
-                    download_url = "https://github.com/ichbinbz/gpt_share/releases/download/v0.1.12/CWS-Codex-Setup-v0.1.12.exe"
+                    download_url = "https://github.com/ichbinbz/gpt_share/releases/download/v0.1.13/CWS-Codex-Setup-v0.1.13.exe"
                     headers = @{{ "User-Agent" = "CWS-Codex-Windows/0.1.6" }}
                 }}
                 $script:ObservedRequest = $null
@@ -744,13 +744,13 @@ function Invoke-RestMethod {
         result = self.run_update_library(
             r"""
             $Release = [pscustomobject]@{
-                tag_name = "v0.1.12"
-                name = "CWS Codex v0.1.12"
+                tag_name = "v0.1.13"
+                name = "CWS Codex v0.1.13"
                 assets = @([pscustomobject]@{
-                    name = "cws-codex-setup-v0.1.12.exe"
+                    name = "cws-codex-setup-v0.1.13.exe"
                     size = 9
                     digest = "sha256:9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
-                    browser_download_url = "https://github.com/ichbinbz/gpt_share/releases/download/v0.1.12/CWS-Codex-Setup-v0.1.12.exe"
+                    browser_download_url = "https://github.com/ichbinbz/gpt_share/releases/download/v0.1.13/CWS-Codex-Setup-v0.1.13.exe"
                 })
             }
             $Rejected = $false
@@ -771,16 +771,16 @@ function Invoke-RestMethod {
         result = self.run_update_library(
             r"""
             $Urls = @(
-                "https://user@github.com/ichbinbz/gpt_share/releases/download/v0.1.12/CWS-Codex-Setup-v0.1.12.exe",
-                "https://github.com:444/ichbinbz/gpt_share/releases/download/v0.1.12/CWS-Codex-Setup-v0.1.12.exe"
+                "https://user@github.com/ichbinbz/gpt_share/releases/download/v0.1.13/CWS-Codex-Setup-v0.1.13.exe",
+                "https://github.com:444/ichbinbz/gpt_share/releases/download/v0.1.13/CWS-Codex-Setup-v0.1.13.exe"
             )
             $Rejected = @()
             foreach ($Url in $Urls) {
                 $Release = [pscustomobject]@{
-                    tag_name = "v0.1.12"
-                    name = "CWS Codex v0.1.12"
+                    tag_name = "v0.1.13"
+                    name = "CWS Codex v0.1.13"
                     assets = @([pscustomobject]@{
-                        name = "CWS-Codex-Setup-v0.1.12.exe"
+                        name = "CWS-Codex-Setup-v0.1.13.exe"
                         size = 9
                         digest = "sha256:9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
                         browser_download_url = $Url
@@ -805,13 +805,13 @@ function Invoke-RestMethod {
         result = self.run_update_library(
             r"""
             $Release = [pscustomobject]@{
-                tag_name = "vv0.1.12"
-                name = "CWS Codex v0.1.12"
+                tag_name = "vv0.1.13"
+                name = "CWS Codex v0.1.13"
                 assets = @([pscustomobject]@{
-                    name = "CWS-Codex-Setup-v0.1.12.exe"
+                    name = "CWS-Codex-Setup-v0.1.13.exe"
                     size = 9
                     digest = "sha256:9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
-                    browser_download_url = "https://github.com/ichbinbz/gpt_share/releases/download/v0.1.12/CWS-Codex-Setup-v0.1.12.exe"
+                    browser_download_url = "https://github.com/ichbinbz/gpt_share/releases/download/v0.1.13/CWS-Codex-Setup-v0.1.13.exe"
                 })
             }
             $Rejected = $false
@@ -839,13 +839,13 @@ function Invoke-RestMethod {
             $GithubFetch = {
                 param($Request)
                 [pscustomobject]@{
-                    tag_name = "v0.1.12"
-                    name = "CWS Codex v0.1.12"
+                    tag_name = "v0.1.13"
+                    name = "CWS Codex v0.1.13"
                     assets = @([pscustomobject]@{
-                        name = "CWS-Codex-Setup-v0.1.12.exe"
+                        name = "CWS-Codex-Setup-v0.1.13.exe"
                         size = 9
                         digest = "sha256:9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
-                        browser_download_url = "https://github.com/ichbinbz/gpt_share/releases/download/v0.1.12/CWS-Codex-Setup-v0.1.12.exe"
+                        browser_download_url = "https://github.com/ichbinbz/gpt_share/releases/download/v0.1.13/CWS-Codex-Setup-v0.1.13.exe"
                     })
                 }
             }
@@ -862,14 +862,14 @@ function Invoke-RestMethod {
             $SuccessfulBrokerFetch = {
                 param($Request)
                 [pscustomobject]@{
-                    release_version = "0.1.12"
+                    release_version = "0.1.13"
                     published_at = "2026-09-18T00:00:00Z"
                     assets = @([pscustomobject]@{
                         platform = "windows-installer"
-                        name = "CWS-Codex-Setup-v0.1.12.exe"
+                        name = "CWS-Codex-Setup-v0.1.13.exe"
                         size = 9
                         sha256 = "9c0d294c05fc1d88d698034609bb81c0c69196327594e4c69d2915c80fd9850c"
-                        download_url = "/v1/client/releases/download/CWS-Codex-Setup-v0.1.12.exe"
+                        download_url = "/v1/client/releases/download/CWS-Codex-Setup-v0.1.13.exe"
                     })
                 }
             }

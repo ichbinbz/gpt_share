@@ -9,7 +9,7 @@ import tarfile
 from pathlib import Path
 
 
-VERSION = "0.1.12"
+VERSION = "0.1.13"
 ARCHIVE_ROOT = f"CWS-Codex-Linux-v{VERSION}"
 CLIENT_FILES = (
     Path("linux-client/install.sh"),

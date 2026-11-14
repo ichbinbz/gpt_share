@@ -114,6 +114,9 @@ Write-CwsLaunchLog ("VS Code launch requested: " + $VsCodePath)
 $Watcher = Join-Path $PSScriptRoot "Watch-CwsCodex.ps1"
 $WatcherArgs = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$Watcher`" -ConfigPath `"$ConfigPath`""
 Start-Process -FilePath "powershell.exe" -ArgumentList $WatcherArgs -WindowStyle Hidden
+$Tray = Join-Path $PSScriptRoot "Tray-CwsCodex.ps1"
+$TrayArgs = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$Tray`" -ConfigPath `"$ConfigPath`""
+Start-Process -FilePath "powershell.exe" -ArgumentList $TrayArgs -WindowStyle Hidden
 
 if (-not $SyncSucceeded) {
     Write-Host "VS Code 已启动，但 Codex 凭据尚未同步。诊断日志：$LogPath" -ForegroundColor Yellow

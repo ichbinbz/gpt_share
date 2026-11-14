@@ -14,7 +14,7 @@
 )
 
 $ErrorActionPreference = "Stop"
-$ClientVersion = "0.1.12"
+$ClientVersion = "0.1.13"
 . (Join-Path $PSScriptRoot "Common-CwsCodex.ps1")
 $InstallLogPath = Join-Path $env:TEMP "CWS-Codex-Install.log"
 
@@ -62,6 +62,7 @@ $PayloadFiles = @(
     "Uninstall-CwsCodex.ps1",
     "CwsCodex.ico",
     "Launch-CwsCodex.cmd",
+    "Tray-CwsCodex.ps1",
     "Configure-Proxy.cmd",
     "Uninstall.cmd",
     "诊断.cmd"

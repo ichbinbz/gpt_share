@@ -8,7 +8,7 @@ import zipfile
 from pathlib import Path
 
 
-VERSION = "0.1.12"
+VERSION = "0.1.13"
 UTF8_BOM = b"\xef\xbb\xbf"
 
 
